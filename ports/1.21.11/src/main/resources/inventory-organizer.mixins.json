@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "com.example.inventoryorganizer.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "InventoryScreenMixin",
+    "OptionsScreenMixin",
+    "GenericContainerScreenMixin",
+    "CreativeInventoryScreenMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

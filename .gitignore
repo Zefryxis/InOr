@@ -1,0 +1,36 @@
+# Gradle build output
+build/
+.gradle/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+out/
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# VS Code
+.vscode/
+
+# Fabric Loom cache
+.loom-cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local gradle properties (contains JDK path, personal settings)
+gradle.properties
+
+# Compiled class files
+*.class
+
+# Log files
+*.log
+
+# Mod config (player-specific, not part of the source)
+run/
