@@ -12,3 +12,6 @@
 - Storage Preset system for chests, barrels, shulker boxes
 - Translations: English, Hungarian, German, Spanish, French, Portuguese (BR), Russian, Chinese (Simplified), Japanese
 - Supports Minecraft 1.20.1, 1.20.4, 1.20.6, 1.21.1, 1.21.4 through 1.21.11
+
+### Known Issues
+- Custom group export and import may have occasional bugs. If groups do not load correctly after import, recreate them manually or contact support.
