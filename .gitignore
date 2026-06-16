@@ -1,36 +1,30 @@
-# Gradle build output
-build/
-.gradle/
-
-# IntelliJ IDEA
+# IDE
 .idea/
+.vscode/
+.gradle/
 *.iml
 *.iws
+*.ipr
+*.sublime-workspace
+
+# Build & output
+build/
 out/
+*.jar
+*.zip
 
-# Eclipse
-.classpath
-.project
-.settings/
-
-# VS Code
-.vscode/
-
-# Fabric Loom cache
-.loom-cache/
-
-# OS files
+# OS
 .DS_Store
 Thumbs.db
+.DS_Store?
 
-# Local gradle properties (contains JDK path, personal settings)
-gradle.properties
-
-# Compiled class files
-*.class
-
-# Log files
-*.log
-
-# Mod config (player-specific, not part of the source)
+# Project-specific (do not commit)
+Github\ things/
+Versions/
+Release\ Assets/
+.claude/
 run/
+
+# Gradle
+.gradletasknamecache
+gradle-wrapper.jar

@@ -1,21 +1,52 @@
-MIT License
+LICENSE: All Rights Reserved (Source-Available)
 
-Copyright (c) 2026 Zefryxis
+Copyright (c) 2025 Zefryxis
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+OVERVIEW
+This source code is provided publicly on an "as-is" basis for inspection, education, and
+non-commercial reference only. You are permitted to view, study, and learn from this code.
+All other rights are reserved.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+PERMITTED USES
+You are permitted to:
+  • View, read, and study this source code for educational purposes and code review
+  • Make private, local modifications for your own use (not shared or redistributed)
+  • Report bugs and request features via Issues on the GitHub repository
+  • Participate in Discussions on the GitHub repository
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+PROHIBITED USES
+You are NOT permitted to:
+  • Redistribute, republish, or re-upload this mod (in whole or in part) under any name,
+    version number, or license — whether as-is or modified
+  • Create a public or private fork, fork-like derivative, or modified version for distribution
+  • Sell, commercialize, license, or claim ownership of this code or any derivative
+  • Compile or build your own distribution of this code and share it publicly
+  • Remove, obscure, or alter any copyright notice, this license, or attribution
+  • Circumvent, disable, or undermine the access controls of this repository
+  • Use this source code as the basis for a competing or derivative mod without explicit permission
+
+OFFICIAL DISTRIBUTION
+The ONLY official and authorized distribution channels for this mod are:
+  • Modrinth: https://modrinth.com/mod/inventory-organizer
+  • GitHub Releases: https://github.com/Zefryxis/InventoryOrganizer/releases
+    (which link to the Modrinth build artifacts)
+
+Any other distribution — including via CurseForge, Discord, personal websites, or other platforms —
+is unauthorized and infringes this license.
+
+ENFORCEMENT
+Unauthorized distributions or derivative works will be subject to Digital Millennium Copyright Act
+(DMCA) takedown notices via GitHub and other platforms. If you discover an unauthorized copy,
+please report it to: mihalyponya@gmail.com
+
+For inquiries about licensing exceptions or special permissions, contact the author.
+
+LIMITATION OF LIABILITY
+This source code is provided "as-is" without warranty of any kind, express or implied,
+including but not limited to the warranties of merchantability, fitness for a particular purpose,
+and non-infringement. In no event shall the author be liable for any claim, damages, or other liability.
+
+---
+
+This license is effective for all versions of Inventory Organizer released under the 1.4.x line and forward.
+Last updated: June 2025.
