@@ -5,7 +5,7 @@
 ![License: ARR](https://img.shields.io/badge/License-All%20Rights%20Reserved-red)
 [![Download on Modrinth](https://img.shields.io/modrinth/dt/inventory-organizer?label=Modrinth%20Downloads&color=00CC44)](https://modrinth.com/mod/inventory-organizer)
 
-A Fabric mod for organizing your inventory and storage with one click, plus a server-aware multi-chest warehouse system, optional automations, and remote crafting. Runs on **Minecraft 26.1, 26.1.1, and 26.1.2**.
+A Fabric mod for organizing your inventory and storage with one click, plus a server-aware multi-chest warehouse system, optional automations, and remote crafting.
 
 > **Note:** This mod is published under an **All Rights Reserved (Source-Available)** license. See `LICENSE` for details.
 
@@ -161,4 +161,4 @@ This source code is published under an **All Rights Reserved (Source-Available)*
 
 ---
 
-**Latest Version:** 1.4.1 (June 2025)
+Ubdated on: 2026. 06. 16.
