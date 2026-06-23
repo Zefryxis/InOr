@@ -1,0 +1,11 @@
+{
+  "required": false,
+  "package": "com.example.inventoryorganizer.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "CraftingRemovedMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}
