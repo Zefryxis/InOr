@@ -120,7 +120,9 @@
       "Bash(cp \"C:/Users/mihal/Documents/Hotbarswitch/1.21.11/src/main/resources/assets/hotbar-switch/lang/en_us.json\" \"C:/Users/mihal/Documents/Hotbarswitch/26.1.2/src/main/resources/assets/hotbar-switch/lang/\")",
       "Bash(cp -r \"C:/Users/mihal/Documents/Versions/InventoryOrganizerMod-26.1.2/gradle\" \"C:/Users/mihal/Documents/Hotbarswitch/26.1.2/\")",
       "Bash(cp \"C:/Users/mihal/Documents/Versions/InventoryOrganizerMod-26.1.2/gradlew\" \"C:/Users/mihal/Documents/Versions/InventoryOrganizerMod-26.1.2/gradlew.bat\" \"C:/Users/mihal/Documents/Hotbarswitch/26.1.2/\")",
-      "Bash(cp \"C:/Users/mihal/Documents/Hotbarswitch/26.1.2/build/libs/hotbar-switch-1.0.0.jar\" \"C:/Users/mihal/Documents/Hotbarswitch/jars/hotbar-switch-26.1.2.jar\" && ls \"C:/Users/mihal/Documents/Hotbarswitch/jars/\")"
+      "Bash(cp \"C:/Users/mihal/Documents/Hotbarswitch/26.1.2/build/libs/hotbar-switch-1.0.0.jar\" \"C:/Users/mihal/Documents/Hotbarswitch/jars/hotbar-switch-26.1.2.jar\" && ls \"C:/Users/mihal/Documents/Hotbarswitch/jars/\")",
+      "Bash(curl -sL \"https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/maven-metadata.xml\")",
+      "Bash(curl -sL \"https://maven.fabricmc.net/net/fabricmc/yarn/maven-metadata.xml\")"
     ]
   }
 }

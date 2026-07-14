@@ -2,9 +2,9 @@ package com.example.inventoryorganizer;
 
 import com.example.inventoryorganizer.config.OrganizerConfig;
 import com.example.inventoryorganizer.config.StoragePreset;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.item.ItemStack;
-import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.inventory.ContainerInput;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,30 +16,49 @@ public class StorageSorter {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("inventory-organizer/OST");
 
+    // Fight-mode rate limiting (mirrors InventorySorter): during PvP the OST does at most ONE swap
+    // per press, shares OI's cooldown, and skips bulk consolidation — so it can't be used as a
+    // fast macro in combat. Enforced centrally in sortContainer() so the OST button AND the keybind
+    // (both call sortContainer) are limited identically.
+    private static boolean fightModeLimit = false;
+    private static int fightModeSwapsDone = 0;
+
     /**
-     * Sort the currently open container using the first matching storage preset.
-     * Must be called while a container screen is open.
+     * Sort the currently open container.
+     *
+     * <p>Uses the per-chest profile that {@link ChestIdentifier} resolved for the open chest, if
+     * any; otherwise falls back to the size-based default profile (Container 27 / Large Chest 54),
+     * which is what every chest used before per-chest profiles existed.
      *
      * @param containerSize  number of slots in the container (27 or 54, etc.)
      * @param syncId         the screen handler sync ID
      */
     public static void sortContainer(int containerSize, int syncId) {
         OrganizerConfig config = OrganizerConfig.get();
-        int presetIdx = findMatchingPresetIndex(config, containerSize);
-        if (presetIdx < 0) {
-            LOGGER.warn("No storage preset configured for container size {}", containerSize);
+        StoragePreset profile = ChestIdentifier.getActiveProfile();
+        if (profile == null) {
+            // No per-chest profile bound → use the protected default for this size.
+            profile = config.getDefaultForSize(containerSize);
+        }
+        if (profile == null) {
+            LOGGER.warn("No storage profile or default for container size {}", containerSize);
             return;
         }
-        sortContainerWithPreset(containerSize, syncId, config.getStoragePresets().get(presetIdx), presetIdx);
-    }
-
-    /** Find the index of the first storage preset whose size matches the container (-1 if not found). */
-    private static int findMatchingPresetIndex(OrganizerConfig config, int containerSize) {
-        List<StoragePreset> presets = config.getStoragePresets();
-        for (int i = 0; i < presets.size(); i++) {
-            if (presets.get(i).getSize() == containerSize) return i;
+        // During PvP, rate-limit OST exactly like OI: shared cooldown + a single swap per press.
+        if (FightModeTracker.isActive()) {
+            if (!FightModeTracker.canUseOI()) return;
+            FightModeTracker.markOIUsed();
+            fightModeLimit = true;
+            fightModeSwapsDone = 0;
+            try {
+                sortContainerWithPreset(containerSize, syncId, profile, profile.getId());
+            } finally {
+                fightModeLimit = false;
+            }
+            return;
         }
-        return -1;
+        // Tier data is keyed by stable profile id (defaults keep ids 0/1/2 for backward compat).
+        sortContainerWithPreset(containerSize, syncId, profile, profile.getId());
     }
 
     /**
@@ -47,16 +66,15 @@ public class StorageSorter {
      * Uses the same matching logic as InventorySorter (via package-private helpers).
      */
     public static void sortContainerWithPreset(int containerSize, int syncId, StoragePreset preset, int presetIdx) {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client.player == null || client.interactionManager == null) return;
+        Minecraft client = Minecraft.getInstance();
+        if (client.player == null || client.gameMode == null) return;
 
-        // Step 1: Collect items from container slots (indices 0 .. containerSize-1)
-        // The container handler's slots 0..containerSize-1 are the container's own slots.
-        // We read them via client.player.currentScreenHandler.getSlot(i).getStack()
-        ItemStack[] containerItems = new ItemStack[containerSize];
-        for (int i = 0; i < containerSize; i++) {
-            containerItems[i] = client.player.currentScreenHandler.getSlot(i).getStack().copy();
-        }
+        // Step 0: Merge same-item partial stacks into full stacks first, so the sort works with
+        // consolidated stacks instead of leaving several half-stacks of the same item lying around.
+        consolidateStacks(client, syncId, containerSize);
+
+        // Step 1: Collect items from container slots (indices 0 .. containerSize-1), now consolidated.
+        ItemStack[] containerItems = readContainer(client, containerSize);
 
         // Step 2: Collect all non-empty items into a pool
         List<ItemStack> pool = new ArrayList<>();
@@ -73,7 +91,7 @@ public class StorageSorter {
         OrganizerConfig config = OrganizerConfig.get();
         String[] matOrderArr = config.getPreference("sort_material_order");
         if (matOrderArr == null || matOrderArr.length == 0) {
-            matOrderArr = new String[]{"netherite", "diamond", "iron", "gold", "stone", "wood", "leather", "chain"};
+            matOrderArr = new String[]{"netherite", "diamond", "iron", "copper", "gold", "stone", "wood", "leather", "chain"};
         }
         final String[] finalMatOrder = matOrderArr;
 
@@ -115,9 +133,14 @@ public class StorageSorter {
             String rule = preset.getSlotRule(s);
             if (!rule.contains(":") && !rule.startsWith("g:") && !rule.startsWith("t:")
                     && !rule.equals("any") && !rule.equals("empty")) continue;
-            if (rule.contains(":")) { // specific item (minecraft:xxx)
+            if (rule.contains(":")) { // specific item (minecraft:xxx) or specific potion (pot:effect)
+                boolean isPot = rule.startsWith("pot:");
+                String potEffect = isPot ? rule.substring(4) : null;
                 for (int j = 0; j < pool.size(); j++) {
-                    if (InventorySorter.matchesSpecificItem(InventorySorter.getItemId(pool.get(j)), rule)) {
+                    boolean m = isPot
+                            ? InventorySorter.matchesPotionEffect(pool.get(j), potEffect)
+                            : InventorySorter.matchesSpecificItem(InventorySorter.getItemId(pool.get(j)), rule);
+                    if (m) {
                         desired[s] = pool.remove(j);
                         break;
                     }
@@ -139,15 +162,16 @@ public class StorageSorter {
             }
         }
 
-        // Pass 2: group matches (g:weapons, g:food etc.)
+        // Pass 2: group matches — both heuristic groups (g:weapons, g:food …) and materialized
+        // built-in / custom groups (cg:blocks …). ruleMatchesItem resolves cg: against the actual
+        // group membership and g: through the authoritative SortLogic matcher, so a cg:blocks slot
+        // pulls real blocks instead of falling through to the "any" pass.
         for (int s : slotOrder) {
             if (!desired[s].isEmpty()) continue;
             String rule = preset.getSlotRule(s);
-            if (!rule.startsWith("g:")) continue;
-            String groupName = rule.substring(2);
-            int targetCat = InventorySorter.groupNameToCategory(groupName);
+            if (!rule.startsWith("g:") && !rule.startsWith("cg:")) continue;
             for (int j = 0; j < pool.size(); j++) {
-                if (InventorySorter.categoryMatches(pool.get(j), targetCat)) {
+                if (InventoryOrganizerClient.ruleMatchesItem(rule, pool.get(j))) {
                     desired[s] = pool.remove(j);
                     break;
                 }
@@ -165,67 +189,135 @@ public class StorageSorter {
 
         LOGGER.debug("Sorting container size={} preset='{}' pool remaining={}", containerSize, preset.getName(), pool.size());
 
-        // Step 5: Execute swaps within container slots only
-        ItemStack[] current = containerItems; // already copied
+        // Step 5: Execute the layout the same robust way the OI inventory sort does — re-read the
+        // real container state after EVERY swap (ground truth) and clear the cursor if a same-item
+        // merge leaves leftovers. The old version tracked state manually and required exact stack
+        // counts, so partial / merging stacks (e.g. several bread x7) were left unplaced.
+        ItemStack[] current = readContainer(client, containerSize);
 
         for (int targetSlot = 0; targetSlot < containerSize; targetSlot++) {
             ItemStack want = desired[targetSlot];
             if (want.isEmpty()) continue;
-            String wantId = InventorySorter.getItemId(want);
 
             ItemStack have = current[targetSlot];
-            if (!have.isEmpty() && InventorySorter.getItemId(have).equals(wantId)
+            if (!have.isEmpty() && ItemStack.isSameItemSameComponents(have, want)
                     && have.getCount() == want.getCount()) continue; // already correct
 
-            // Clear target slot if occupied by wrong item
-            if (!have.isEmpty()) {
-                int dumpSlot = findEmptyContainerSlot(current, containerSize, targetSlot);
-                if (dumpSlot != -1) {
-                    doContainerSwap(client, syncId, targetSlot, dumpSlot, containerSize);
-                    current[dumpSlot] = current[targetSlot];
-                    current[targetSlot] = ItemStack.EMPTY;
-                    have = ItemStack.EMPTY;
+            // Find the wanted stack elsewhere: prefer an exact (item+components+count) match, then
+            // fall back to item+components ignoring count (covers partial / already-merged stacks).
+            int sourceSlot = findSource(current, desired, containerSize, targetSlot, want, true);
+            if (sourceSlot == -1) sourceSlot = findSource(current, desired, containerSize, targetSlot, want, false);
+            if (sourceSlot == -1) continue;
+
+            // In PvP, stop after a single swap per press (shared OI cooldown gates the rest).
+            if (fightModeLimit && fightModeSwapsDone >= 1) break;
+            doContainerSwap(client, syncId, sourceSlot, targetSlot);
+            fightModeSwapsDone++;
+            current = readContainer(client, containerSize); // ground truth after the swap
+
+            // A same-item merge can leave items on the cursor — drop them into any empty slot.
+            if (!client.player.containerMenu.getCarried().isEmpty()) {
+                for (int i = 0; i < containerSize; i++) {
+                    if (current[i].isEmpty()) {
+                        client.gameMode.handleContainerInput(syncId, i, 0, ContainerInput.PICKUP, client.player);
+                        current = readContainer(client, containerSize);
+                        break;
+                    }
                 }
             }
+        }
 
-            // Find source
-            int sourceSlot = -1;
-            for (int i = 0; i < containerSize; i++) {
-                if (i == targetSlot) continue;
-                if (!current[i].isEmpty() && InventorySorter.getItemId(current[i]).equals(wantId)
-                        && current[i].getCount() == want.getCount()) {
-                    sourceSlot = i;
+        // Cleanup: evict any items that ended up in EMPTY_LOCKED slots.
+        // First try to move them to a free non-nothing slot in the chest; if none exists
+        // (e.g. all slots are "nothing"), shift-click the item into the player's inventory.
+        current = readContainer(client, containerSize);
+        for (int s = 0; s < containerSize; s++) {
+            if (current[s].isEmpty()) continue;
+            if (!preset.getSlotRule(s).equals("empty")) continue;
+            boolean moved = false;
+            for (int free = 0; free < containerSize; free++) {
+                if (free == s) continue;
+                if (preset.getSlotRule(free).equals("empty")) continue;
+                if (current[free].isEmpty()) {
+                    doContainerSwap(client, syncId, s, free);
+                    current = readContainer(client, containerSize);
+                    moved = true;
                     break;
                 }
             }
-            if (sourceSlot == -1) continue;
-
-            doContainerSwap(client, syncId, sourceSlot, targetSlot, containerSize);
-            ItemStack tmp = current[targetSlot];
-            current[targetSlot] = current[sourceSlot];
-            current[sourceSlot] = tmp;
+            if (!moved) {
+                // No free non-nothing slot in chest — shift-click to player inventory
+                client.gameMode.handleContainerInput(syncId, s, 0, ContainerInput.QUICK_MOVE, client.player);
+                current = readContainer(client, containerSize);
+            }
         }
 
         LOGGER.debug("Sort complete.");
     }
 
-    private static int findEmptyContainerSlot(ItemStack[] current, int size, int excludeSlot) {
+    /**
+     * Merge partial stacks of the same item within the container into full stacks (up to the item's
+     * max stack size), so e.g. several bread x7 become one bread x35. For each not-yet-full stack,
+     * pour later same-item stacks into it: pick up the later stack, left-click the earlier one (vanilla
+     * fills it up to max, leftover stays on the cursor), then drop any leftover back. Ground truth is
+     * re-read after each merge.
+     */
+    private static void consolidateStacks(Minecraft client, int syncId, int size) {
+        if (fightModeLimit) return; // no bulk multi-click consolidation during PvP
+        ItemStack[] current = readContainer(client, size);
         for (int i = 0; i < size; i++) {
-            if (i != excludeSlot && current[i].isEmpty()) return i;
+            if (current[i].isEmpty() || current[i].getCount() >= current[i].getMaxStackSize()) continue;
+            for (int j = i + 1; j < size; j++) {
+                if (current[i].getCount() >= current[i].getMaxStackSize()) break; // i is full now
+                if (current[j].isEmpty()) continue;
+                if (!ItemStack.isSameItemSameComponents(current[i], current[j])) continue;
+                client.gameMode.handleContainerInput(syncId, j, 0, ContainerInput.PICKUP, client.player); // cursor = j
+                client.gameMode.handleContainerInput(syncId, i, 0, ContainerInput.PICKUP, client.player); // pour into i
+                if (!client.player.containerMenu.getCarried().isEmpty()) {
+                    client.gameMode.handleContainerInput(syncId, j, 0, ContainerInput.PICKUP, client.player); // leftover back to j
+                }
+                current = readContainer(client, size);
+            }
+        }
+    }
+
+    /** Snapshot the container's own slots (0 .. size-1) straight from the live menu. */
+    private static ItemStack[] readContainer(Minecraft client, int size) {
+        ItemStack[] arr = new ItemStack[size];
+        for (int i = 0; i < size; i++) {
+            arr[i] = client.player.containerMenu.getSlot(i).getItem().copy();
+        }
+        return arr;
+    }
+
+    /**
+     * Find a slot holding {@code want}. Never pulls from a slot that already holds its own desired
+     * item. When {@code exactCount} is false, matches on item+components only (ignores the amount).
+     */
+    private static int findSource(ItemStack[] current, ItemStack[] desired, int size,
+                                  int targetSlot, ItemStack want, boolean exactCount) {
+        for (int i = 0; i < size; i++) {
+            if (i == targetSlot) continue;
+            if (!desired[i].isEmpty() && !current[i].isEmpty()
+                    && ItemStack.isSameItemSameComponents(current[i], desired[i])
+                    && (!exactCount || current[i].getCount() == desired[i].getCount())) continue;
+            if (!current[i].isEmpty() && ItemStack.isSameItemSameComponents(current[i], want)
+                    && (!exactCount || current[i].getCount() == want.getCount())) {
+                return i;
+            }
         }
         return -1;
     }
 
     /**
-     * Swap two slots within the container. Container slot indices are direct (0-based).
-     * The screen handler maps: container slot i → screen slot i.
+     * Swap two container slots (direct 0-based indices). pickup → pickup, and if the destination
+     * held an item it's now on the cursor → drop it back at the source.
      */
-    private static void doContainerSwap(MinecraftClient client, int syncId, int from, int to, int containerSize) {
-        // For container screens, container slots are at their direct indices (0..size-1)
-        client.interactionManager.clickSlot(syncId, from, 0, SlotActionType.PICKUP, client.player);
-        client.interactionManager.clickSlot(syncId, to, 0, SlotActionType.PICKUP, client.player);
-        if (!client.player.currentScreenHandler.getCursorStack().isEmpty()) {
-            client.interactionManager.clickSlot(syncId, from, 0, SlotActionType.PICKUP, client.player);
+    private static void doContainerSwap(Minecraft client, int syncId, int from, int to) {
+        client.gameMode.handleContainerInput(syncId, from, 0, ContainerInput.PICKUP, client.player);
+        client.gameMode.handleContainerInput(syncId, to, 0, ContainerInput.PICKUP, client.player);
+        if (!client.player.containerMenu.getCarried().isEmpty()) {
+            client.gameMode.handleContainerInput(syncId, from, 0, ContainerInput.PICKUP, client.player);
         }
     }
 

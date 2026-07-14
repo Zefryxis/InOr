@@ -1,27 +1,33 @@
 package com.example.inventoryorganizer.config;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.text.Text;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.network.chat.Component;
 
 /**
- * A custom-styled button that matches the mod's dark Minecraft-inspired UI theme.
- * Raised 3D bevel (lighter top/left, darker bottom/right), dark background.
+ * 26.1 port of the dark Minecraft-themed button used across the mod.
+ *
+ * 1.21.11 made AbstractWidget.renderWidget final, but the parent abstract
+ * Button class still exposes extractContents(GuiGraphicsExtractor, ...) for
+ * subclass-driven painting. We extend Button directly and override
+ * extractContents to draw the same raised 3D bevel + dark fill the
+ * older-version StyledButton did.
  */
-public class StyledButton extends ButtonWidget {
+public class StyledButton extends Button {
 
-    private StyledButton(int x, int y, int width, int height, Text message, PressAction onPress) {
-        super(x, y, width, height, message, onPress, DEFAULT_NARRATION_SUPPLIER);
+    protected StyledButton(int x, int y, int width, int height,
+                           Component message, OnPress onPress) {
+        super(x, y, width, height, message, onPress, DEFAULT_NARRATION);
     }
 
-    public static StyledButton.Builder styledBuilder(Text message, PressAction onPress) {
-        return new StyledButton.Builder(message, onPress);
+    public static Builder styledBuilder(Component message, OnPress onPress) {
+        return new Builder(message, onPress);
     }
 
     @Override
-    protected void renderWidget(DrawContext context, int mouseX, int mouseY, float delta) {
-        boolean hovered = this.isSelected();
+    protected void extractContents(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        boolean hovered = this.isHoveredOrFocused();
         boolean enabled = this.active;
 
         int x = getX(), y = getY(), w = getWidth(), h = getHeight();
@@ -51,10 +57,10 @@ public class StyledButton extends ButtonWidget {
             context.fill(x + 3, y + 3, x + w - 3, y + 5, 0x22FFFFFF);
         }
 
-        // 6. Text
+        // 6. Text (centered with shadow)
         int textColor = !enabled ? 0xFF686868 : hovered ? 0xFFFFFFFF : 0xFFCCCCCC;
-        context.drawCenteredTextWithShadow(
-            MinecraftClient.getInstance().textRenderer,
+        context.centeredText(
+            Minecraft.getInstance().font,
             getMessage(),
             x + w / 2,
             y + (h - 8) / 2,
@@ -62,17 +68,17 @@ public class StyledButton extends ButtonWidget {
         );
     }
 
-    public static class Builder {
-        private final Text message;
-        private final PressAction onPress;
+    public static final class Builder {
+        private final Component message;
+        private final OnPress onPress;
         private int x, y, w = 150, h = 20;
 
-        public Builder(Text message, PressAction onPress) {
+        public Builder(Component message, OnPress onPress) {
             this.message = message;
             this.onPress = onPress;
         }
 
-        public StyledButton.Builder dimensions(int x, int y, int w, int h) {
+        public Builder bounds(int x, int y, int w, int h) {
             this.x = x; this.y = y; this.w = w; this.h = h;
             return this;
         }

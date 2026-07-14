@@ -1,17 +1,17 @@
 package com.example.inventoryorganizer.config;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.Registries;
-import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,7 +44,7 @@ public class SortingOrderConfigScreen extends Screen {
 
     // Selected slot
     private int selectedSlot = -1;
-    private TextFieldWidget numberField;
+    private EditBox numberField;
 
     // Sort criteria configuration (right side)
     private List<String> criteriaOrder;
@@ -61,7 +61,10 @@ public class SortingOrderConfigScreen extends Screen {
 
     // Scroll offset for right panel
     private int scrollOffset = 0;
-    private static final int MAX_SCROLL = 2500;
+    private int maxScroll = 2500; // recomputed each frame from actual content height
+    // Scrollbar drag state
+    private boolean draggingScrollbar = false;
+    private static final int SCROLLBAR_WIDTH = 6;
 
     // Drag-and-drop state
     private int dragSection = -1;  // 0=criteria, 1=material, 2=potionType, 3=food, 4=enchant, 5=potion, 6=block, 7+=custom groups
@@ -69,15 +72,40 @@ public class SortingOrderConfigScreen extends Screen {
     private double dragCurrentY = 0;
     private double dragCurrentX = 0;
     private boolean isDragging = false;
-    // Section first-item Y positions (set during drawRightPanel, BEFORE scroll) – 7 fixed + up to 23 custom groups
-    private int[] sectionFirstItemY = new int[30];
+    // Section first-item Y positions (set during drawRightPanel, BEFORE scroll) – 7 fixed sections plus
+    // one per group. Built-in groups are now materialized as custom groups, so there can be 22+ of them.
+    private int[] sectionFirstItemY = new int[128];
+
+    // --- Collapsible sections (fold/unfold, like code definitions). ---
+    // Key = section index (0-6 fixed, 7+gi groups, -100 = the Toggles section). The FIXED sections
+    // (Sort Priority, Material, Potion Type, Toggles, Food, Enchant, Potion, Block) start OPEN — they're
+    // small, no need to fold them. Only the (potentially long) custom-group sections start collapsed.
+    private final java.util.Set<Integer> expandedSections =
+            new java.util.HashSet<>(java.util.List.of(0, 1, 2, 3, 4, 5, 6, -100));
+    private static final int SEC_TOGGLES = -100;
+    // Clickable header rects recorded during render (screen coords): {x, y, w, h, sectionKey}.
+    private final java.util.List<int[]> headerHits = new java.util.ArrayList<>();
+    // Toggle-row rects recorded during render (screen coords), null when the Toggles section is closed.
+    private int[] enchantToggleRect = null;
+    private int[] durabilityToggleRect = null;
+
+    private boolean sectionExpanded(int key) { return expandedSections.contains(key); }
+
+    /** Draw a foldable section header (▶ closed / ▼ open) and record its click rect. Returns expanded. */
+    private boolean drawSectionHeader(GuiGraphicsExtractor context, int px, int curY, String title, int key) {
+        boolean exp = expandedSections.contains(key);
+        String arrow = exp ? "▼ " : "▶ ";
+        context.text(font, Component.literal("§6" + arrow + title), px + 2, curY, 0xFFFFAA00);
+        headerHits.add(new int[]{px, curY - 2, 156, 12, key});
+        return exp;
+    }
 
     // Custom group ordering (loaded in loadSortPreferences)
     private List<String> cgNames = new ArrayList<>();
     private List<List<String>> customGroupOrders = new ArrayList<>();
 
     private static final String[] DEFAULT_CRITERIA = {"material", "enchant", "durability"};
-    private static final String[] DEFAULT_MATERIALS = {"netherite", "diamond", "iron", "gold", "stone", "wood", "leather", "chain"};
+    public static final String[] DEFAULT_MATERIALS = {"netherite", "diamond", "iron", "copper", "gold", "stone", "wood", "leather", "chain"};
     // ALL 39 food items in Minecraft 1.21
     private static final String[] DEFAULT_FOODS = {
         "golden_carrot", "enchanted_golden_apple", "golden_apple",
@@ -91,29 +119,36 @@ public class SortingOrderConfigScreen extends Screen {
         "salmon", "cod", "rabbit", "tropical_fish", "pufferfish",
         "rotten_flesh", "spider_eye", "poisonous_potato"
     };
-    // ALL 42 enchantments in Minecraft 1.21
-    private static final String[] DEFAULT_ENCHANTS = {
-        // Weapon enchants (7)
-        "sharpness", "smite", "bane_of_arthropods", "knockback", "fire_aspect", "looting", "sweeping_edge",
-        // Tool enchants (3)
-        "efficiency", "fortune", "silk_touch",
-        // Universal (2)
-        "unbreaking", "mending",
-        // Armor enchants (12)
-        "protection", "fire_protection", "blast_protection", "projectile_protection",
-        "feather_falling", "thorns", "respiration", "aqua_affinity",
-        "depth_strider", "frost_walker", "soul_speed", "swift_sneak",
-        // Bow enchants (4)
-        "power", "punch", "flame", "infinity",
-        // Crossbow enchants (3)
-        "piercing", "quick_charge", "multishot",
-        // Trident enchants (4)
+    // ALL 42 enchantments in Minecraft 1.21, ordered by community-consensus value
+    // (most valuable first). This drives item priority in getBestEnchantTier(), which ranks a
+    // gear item by its single highest-priority enchantment (earliest in this list) — so the
+    // "keep the best gear" intuition means the most desirable enchantments must sit at the top,
+    // and the curses at the very bottom. Ordering researched from the Minecraft Wiki best-
+    // enchantments guide + community tier lists (Mending/Unbreaking universal S-tier, then the
+    // core armor/tool/weapon picks, then situational, weapon/bow/trident/mace variants, curses last).
+    public static final String[] DEFAULT_ENCHANTS = {
+        // Universal S-tier — preserve every other enchantment
+        "mending", "unbreaking",
+        // Core best picks (armor / tool / weapon)
+        "protection", "sharpness", "efficiency", "fortune", "looting", "silk_touch",
+        "feather_falling", "power", "respiration",
+        // Situational armor (fire_protection intentionally NOT here — see below)
+        "blast_protection", "projectile_protection",
+        "depth_strider", "aqua_affinity", "thorns", "frost_walker", "soul_speed", "swift_sneak",
+        // Situational melee
+        "smite", "bane_of_arthropods", "sweeping_edge", "fire_aspect", "knockback",
+        // Bow / crossbow
+        "flame", "infinity", "punch", "quick_charge", "piercing", "multishot",
+        // Trident
         "loyalty", "impaling", "riptide", "channeling",
-        // Mace enchants (3)
+        // Mace
         "density", "breach", "wind_burst",
-        // Fishing rod enchants (2)
+        // Fishing rod
         "luck_of_the_sea", "lure",
-        // Curses (2) - NOTE: In 1.21 these are "binding_curse" and "vanishing_curse"
+        // fire_protection ranked as the weakest protective enchant (user request): below every other
+        // useful enchant, just above the curses.
+        "fire_protection",
+        // Curses last — NOTE: in 1.21 these are "binding_curse" and "vanishing_curse"
         "binding_curse", "vanishing_curse"
     };
     // Common Minecraft potion types
@@ -161,7 +196,7 @@ public class SortingOrderConfigScreen extends Screen {
     }
 
     public SortingOrderConfigScreen(Screen parent, String[] slotTexts, String[] equipTexts, String tierKey, boolean storageMode, int storageRows) {
-        super(Text.literal("Tier Order Configuration"));
+        super(Component.literal("Tier Order Configuration"));
         this.parent = parent;
         this.config = OrganizerConfig.get();
         this.tierKey = tierKey;
@@ -297,6 +332,11 @@ public class SortingOrderConfigScreen extends Screen {
         } else {
             for (String p : DEFAULT_POTIONS) potionOrder.add(p);
         }
+        // Append EVERY potion from the registry not already listed, so all potions (including newer
+        // ones like the Trial Chamber potions, and modded potions) can be ordered individually.
+        for (String p : allPotionIds()) {
+            if (!potionOrder.contains(p)) potionOrder.add(p);
+        }
 
         potionTypeOrder = new ArrayList<>();
         String[] savedPotionTypes = config.getPreference("sort_potion_type_order");
@@ -320,7 +360,8 @@ public class SortingOrderConfigScreen extends Screen {
             for (String b : DEFAULT_BLOCKS) blockOrder.add(b);
         }
 
-        // Custom group orders
+        // Custom group orders — ALL custom groups (including the materialized built-in ones) appear here
+        // as ordinary, collapsible group sections, so the user can rank items inside any of them.
         cgNames = config.getCustomGroupNames();
         customGroupOrders = new ArrayList<>();
         for (String cgName : cgNames) {
@@ -350,6 +391,7 @@ public class SortingOrderConfigScreen extends Screen {
         for (int gi = 0; gi < cgNames.size(); gi++) {
             config.setPreference("cg_order_" + cgNames.get(gi), customGroupOrders.get(gi).toArray(new String[0]));
         }
+        config.save();
         LOGGER.info("[InvOrganizer] Saved sort prefs: criteria=" + criteriaOrder + " materials=" + materialOrder + " foods=" + foodOrder + " enchants=" + enchantOrder + " enchDesc=" + enchantDesc + " durDesc=" + durabilityDesc);
     }
 
@@ -382,23 +424,23 @@ public class SortingOrderConfigScreen extends Screen {
 
         // Number input field: center between grid right edge and right panel
         int fieldX = gridX + 9 * SLOT_W + Math.max(40, width / 14);
-        numberField = new TextFieldWidget(textRenderer, fieldX, gridY, 50, 18, Text.literal("Tier"));
+        numberField = new EditBox(font, fieldX, gridY, 50, 18, Component.literal("Tier"));
         numberField.setMaxLength(2);
-        numberField.setPlaceholder(Text.literal("1-41"));
-        addDrawableChild(numberField);
+        numberField.setHint(Component.literal("1-41"));
+        addRenderableWidget(numberField);
 
         // Set button
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Set"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Set"), btn -> {
             applyTierFromField();
-        }).dimensions(fieldX + 54, gridY, 30, 18).build());
+        }).bounds(fieldX + 54, gridY, 30, 18).build());
 
         // Clear button
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("X"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("X"), btn -> {
             if (selectedSlot >= 0) {
                 tierAssignments.remove(selectedSlot);
-                numberField.setText("");
+                numberField.setValue("");
             }
-        }).dimensions(fieldX + 88, gridY, 20, 18).build());
+        }).bounds(fieldX + 88, gridY, 20, 18).build());
 
         // Bottom buttons
         int btnY = height - 28;
@@ -406,33 +448,33 @@ public class SortingOrderConfigScreen extends Screen {
         int totalW = btnW * 3 + 4 * 2;
         int startX = width / 2 - totalW / 2;
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Save"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Save"), btn -> {
             saveTierAssignments();
             saveSortPreferences();
-            MinecraftClient.getInstance().setScreen(parent);
-        }).dimensions(startX, btnY, btnW, 20).build());
+            Minecraft.getInstance().gui.setScreen(parent);
+        }).bounds(startX, btnY, btnW, 20).build());
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Reset"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Reset"), btn -> {
             tierAssignments.clear();
             selectedSlot = -1;
-            numberField.setText("");
-        }).dimensions(startX + btnW + 4, btnY, btnW, 20).build());
+            numberField.setValue("");
+        }).bounds(startX + btnW + 4, btnY, btnW, 20).build());
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Back"), btn -> {
-            MinecraftClient.getInstance().setScreen(parent);
-        }).dimensions(startX + (btnW + 4) * 2, btnY, btnW, 20).build());
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Back"), btn -> {
+            Minecraft.getInstance().gui.setScreen(parent);
+        }).bounds(startX + (btnW + 4) * 2, btnY, btnW, 20).build());
 
         // Guide toggle button (top-right)
         OrganizerConfig cfg = OrganizerConfig.get();
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("?"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("?"), btn -> {
             cfg.setShowHelp(!cfg.isShowHelp());
             cfg.save();
-        }).dimensions(width - 24, 4, 20, 18).build());
+        }).bounds(width - 24, 4, 20, 18).build());
     }
 
     private void applyTierFromField() {
         if (selectedSlot < 0) return;
-        String text = numberField.getText().trim();
+        String text = numberField.getValue().trim();
         if (!text.isEmpty()) {
             try {
                 int tier = Integer.parseInt(text);
@@ -448,8 +490,8 @@ public class SortingOrderConfigScreen extends Screen {
     // --- Render ---
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        super.render(context, mouseX, mouseY, delta);
+    public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        super.extractRenderState(context, mouseX, mouseY, delta);
 
         // Draw decorated background panel for grid
         if (storageMode) {
@@ -474,8 +516,8 @@ public class SortingOrderConfigScreen extends Screen {
         int panelH = height - py - 34;
         drawDecoratedPanel(context, px - 10, py - 10, panelW + 16, panelH + 16);
 
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal("Tier Order Configuration"), width / 2, 4, 0xFFFFFFFF);
-        context.drawTextWithShadow(textRenderer, Text.literal("Click slot > type tier (1=best) > Set | Only slots with rules can be tiered"), width / 2 - 200, 16, 0xFFAAAAAA);
+        context.centeredText(font, Component.literal("Tier Order Configuration"), width / 2, 4, 0xFFFFFFFF);
+        context.text(font, Component.literal("Click slot > type tier (1=best) > Set | Only slots with rules can be tiered"), width / 2 - 200, 16, 0xFFAAAAAA);
 
         drawInventoryGrid(context, mouseX, mouseY);
         drawRightPanel(context, mouseX, mouseY);
@@ -486,9 +528,9 @@ public class SortingOrderConfigScreen extends Screen {
 
     // --- Inventory grid (same layout as VisualInventoryConfigScreen) ---
 
-    private void drawInventoryGrid(DrawContext context, int mouseX, int mouseY) {
+    private void drawInventoryGrid(GuiGraphicsExtractor context, int mouseX, int mouseY) {
         if (storageMode) {
-            context.drawTextWithShadow(textRenderer, Text.literal("Storage Slots"), gridX, gridY - 12, 0xFFFFFF55);
+            context.text(font, Component.literal("Storage Slots"), gridX, gridY - 12, 0xFFFFFF55);
             for (int row = 0; row < storageRows; row++) {
                 for (int col = 0; col < 9; col++) {
                     drawSlot(context, gridX + col * SLOT_W, gridY + row * SLOT_H, row * 9 + col, mouseX, mouseY);
@@ -497,7 +539,7 @@ public class SortingOrderConfigScreen extends Screen {
             return;
         }
         // Inventory label
-        context.drawTextWithShadow(textRenderer, Text.literal("Inventory (slots 9-35)"), gridX, gridY - 12, 0xFFFFFF55);
+        context.text(font, Component.literal("Inventory (slots 9-35)"), gridX, gridY - 12, 0xFFFFFF55);
 
         // Main inventory rows (3 rows x 9 cols, slots 9-35)
         for (int row = 0; row < 3; row++) {
@@ -509,28 +551,28 @@ public class SortingOrderConfigScreen extends Screen {
 
         // Hotbar (slots 0-8)
         int hotbarY = gridY + 3 * SLOT_H + 14;
-        context.drawTextWithShadow(textRenderer, Text.literal("Hotbar (slots 0-8)"), gridX, hotbarY - 12, 0xFFFFFF55);
+        context.text(font, Component.literal("Hotbar (slots 0-8)"), gridX, hotbarY - 12, 0xFFFFFF55);
         for (int col = 0; col < 9; col++) {
             drawSlot(context, gridX + col * SLOT_W, hotbarY, col, mouseX, mouseY);
         }
 
         // Armor slots (left of grid)
         int armorX = gridX - SLOT_W - 8;
-        context.drawTextWithShadow(textRenderer, Text.literal("Armor"), armorX, gridY - 12, 0xFF55FFFF);
+        context.text(font, Component.literal("Armor"), armorX, gridY - 12, 0xFF55FFFF);
         for (int i = 0; i < 4; i++) {
             drawEquipSlot(context, armorX, gridY + i * SLOT_H, i, mouseX, mouseY);
         }
 
         // Offhand slot (below armor)
         int offhandY = gridY + 4 * SLOT_H + 4;
-        context.drawTextWithShadow(textRenderer, Text.literal("Off"), armorX + 4, offhandY - 10, 0xFF55FFFF);
+        context.text(font, Component.literal("Off"), armorX + 4, offhandY - 10, 0xFF55FFFF);
         drawEquipSlot(context, armorX, offhandY, 4, mouseX, mouseY);
     }
 
     // --- Draw individual slot ---
 
     /** Minecraft-style sunken 3D slot (shared between drawSlot and drawEquipSlot) */
-    private void drawMCSlot(DrawContext context, int x, int y, int innerColor, boolean hovered, boolean selected) {
+    private void drawMCSlot(GuiGraphicsExtractor context, int x, int y, int innerColor, boolean hovered, boolean selected) {
         context.fill(x, y, x + SLOT_W, y + SLOT_H, 0xFF111111);
         context.fill(x + 1, y + 1, x + SLOT_W - 1, y + 3, 0xFF2A2A2A);
         context.fill(x + 1, y + 1, x + 3, y + SLOT_H - 1, 0xFF2A2A2A);
@@ -539,16 +581,16 @@ public class SortingOrderConfigScreen extends Screen {
         context.fill(x + 3, y + 3, x + SLOT_W - 3, y + SLOT_H - 3, innerColor);
         if (selected) {
             context.fill(x + 3, y + 3, x + SLOT_W - 3, y + SLOT_H - 3, 0x44FFFF00);
-            context.drawHorizontalLine(x + 2, x + SLOT_W - 3, y + 2, 0xFFFFFF00);
-            context.drawHorizontalLine(x + 2, x + SLOT_W - 3, y + SLOT_H - 3, 0xFFFFFF00);
-            context.drawVerticalLine(x + 2, y + 2, y + SLOT_H - 3, 0xFFFFFF00);
-            context.drawVerticalLine(x + SLOT_W - 3, y + 2, y + SLOT_H - 3, 0xFFFFFF00);
+            context.horizontalLine(x + 2, x + SLOT_W - 3, y + 2, 0xFFFFFF00);
+            context.horizontalLine(x + 2, x + SLOT_W - 3, y + SLOT_H - 3, 0xFFFFFF00);
+            context.verticalLine(x + 2, y + 2, y + SLOT_H - 3, 0xFFFFFF00);
+            context.verticalLine(x + SLOT_W - 3, y + 2, y + SLOT_H - 3, 0xFFFFFF00);
         } else if (hovered) {
             context.fill(x + 3, y + 3, x + SLOT_W - 3, y + SLOT_H - 3, 0x33FFFFFF);
         }
     }
 
-    private void drawSlot(DrawContext context, int x, int y, int slot, int mouseX, int mouseY) {
+    private void drawSlot(GuiGraphicsExtractor context, int x, int y, int slot, int mouseX, int mouseY) {
         String text = slotTexts[slot];
         boolean active = hasRule(text);
         boolean hovered = active && mouseX >= x && mouseX < x + SLOT_W && mouseY >= y && mouseY < y + SLOT_H;
@@ -575,28 +617,28 @@ public class SortingOrderConfigScreen extends Screen {
         }
 
         ItemStack icon = getIconForText(text);
-        if (!icon.isEmpty()) context.drawItem(icon, x + (SLOT_W - 16) / 2, y + 2);
+        if (!icon.isEmpty()) VisualInventoryConfigScreen.drawItemIcon(context, icon, x + (SLOT_W - 16) / 2, y + 2);
 
         if (tier != null) {
             String tierStr = String.valueOf(tier);
-            int tw = textRenderer.getWidth(tierStr);
-            context.drawTextWithShadow(textRenderer, Text.literal("\u00a7a" + tierStr),
+            int tw = font.width(tierStr);
+            context.text(font, Component.literal("\u00a7a" + tierStr),
                     x + (SLOT_W - tw) / 2, y + SLOT_H - 12, 0xFF55FF55);
         } else {
             String displayText = getDisplayText(text);
             int maxTextW = SLOT_W - 4;
-            if (textRenderer.getWidth(displayText) > maxTextW) {
-                while (displayText.length() > 1 && textRenderer.getWidth(displayText + ".") > maxTextW)
+            if (font.width(displayText) > maxTextW) {
+                while (displayText.length() > 1 && font.width(displayText + ".") > maxTextW)
                     displayText = displayText.substring(0, displayText.length() - 1);
                 displayText += ".";
             }
-            int tw = textRenderer.getWidth(displayText);
-            context.drawTextWithShadow(textRenderer, Text.literal(displayText),
+            int tw = font.width(displayText);
+            context.text(font, Component.literal(displayText),
                     x + (SLOT_W - tw) / 2, y + 20, 0xFFAAAAAA);
         }
     }
 
-    private void drawEquipSlot(DrawContext context, int x, int y, int equipIdx, int mouseX, int mouseY) {
+    private void drawEquipSlot(GuiGraphicsExtractor context, int x, int y, int equipIdx, int mouseX, int mouseY) {
         String text = equipTexts[equipIdx];
         boolean active = hasRule(text);
         int key = equipSlotKey(equipIdx);
@@ -614,10 +656,10 @@ public class SortingOrderConfigScreen extends Screen {
 
         if (!active) {
             ItemStack defaultIcon = getDefaultEquipIcon(equipIdx);
-            if (!defaultIcon.isEmpty()) context.drawItem(defaultIcon, x + (SLOT_W - 16) / 2, y + 2);
+            if (!defaultIcon.isEmpty()) VisualInventoryConfigScreen.drawItemIcon(context, defaultIcon, x + (SLOT_W - 16) / 2, y + 2);
             String label = EQUIP_LABELS[equipIdx];
-            int tw = textRenderer.getWidth(label);
-            context.drawTextWithShadow(textRenderer, Text.literal(label),
+            int tw = font.width(label);
+            context.text(font, Component.literal(label),
                     x + (SLOT_W - tw) / 2, y + 20, 0xFF444444);
             return;
         }
@@ -626,17 +668,17 @@ public class SortingOrderConfigScreen extends Screen {
 
         ItemStack icon = getIconForText(text);
         if (icon.isEmpty()) icon = getDefaultEquipIcon(equipIdx);
-        if (!icon.isEmpty()) context.drawItem(icon, x + (SLOT_W - 16) / 2, y + 2);
+        if (!icon.isEmpty()) VisualInventoryConfigScreen.drawItemIcon(context, icon, x + (SLOT_W - 16) / 2, y + 2);
 
         if (tier != null) {
             String tierStr = String.valueOf(tier);
-            int tw = textRenderer.getWidth(tierStr);
-            context.drawTextWithShadow(textRenderer, Text.literal("\u00a7a" + tierStr),
+            int tw = font.width(tierStr);
+            context.text(font, Component.literal("\u00a7a" + tierStr),
                     x + (SLOT_W - tw) / 2, y + SLOT_H - 12, 0x55FF55);
         } else {
             String label = EQUIP_LABELS[equipIdx];
-            int tw = textRenderer.getWidth(label);
-            context.drawTextWithShadow(textRenderer, Text.literal(label),
+            int tw = font.width(label);
+            context.text(font, Component.literal(label),
                     x + (SLOT_W - tw) / 2, y + 20, 0xFF6699CC);
         }
     }
@@ -646,7 +688,7 @@ public class SortingOrderConfigScreen extends Screen {
     // Track panel Y positions for click handling
     private int panelX, panelStartY;
 
-    private void drawRightPanel(DrawContext context, int mouseX, int mouseY) {
+    private void drawRightPanel(GuiGraphicsExtractor context, int mouseX, int mouseY) {
         int rightEdgeMargin = Math.max(10, width / 50);
         int panelW = Math.max(160, Math.min(220, width / 3)); // responsive 160-220px
         int px = width - panelW - rightEdgeMargin;
@@ -656,15 +698,25 @@ public class SortingOrderConfigScreen extends Screen {
         // Dark background panel
         int panelH = height - py - 34;
         context.fill(px - 2, py - 2, px + panelW, py + panelH, 0xFF111111);
-        context.drawHorizontalLine(px - 2, px + panelW, py - 2, 0xFF666666);
-        context.drawHorizontalLine(px - 2, px + panelW, py + panelH, 0xFF666666);
-        context.drawVerticalLine(px - 2, py - 2, py + panelH, 0xFF666666);
-        context.drawVerticalLine(px + panelW, py - 2, py + panelH, 0xFF666666);
+        context.horizontalLine(px - 2, px + panelW, py - 2, 0xFF666666);
+        context.horizontalLine(px - 2, px + panelW, py + panelH, 0xFF666666);
+        context.verticalLine(px - 2, py - 2, py + panelH, 0xFF666666);
+        context.verticalLine(px + panelW, py - 2, py + panelH, 0xFF666666);
 
         // Enable scissor for scrolling
         context.enableScissor(px - 2, py - 2, px + panelW, py + panelH);
 
         int curY = py - scrollOffset;
+
+        // Reset interactive rects recorded this frame (collapsible headers + the two toggles).
+        headerHits.clear();
+        enchantToggleRect = null;
+        durabilityToggleRect = null;
+
+        // In Advanced mode, only the slot-tier grid and the per-group item orders are editable — the
+        // deep global sort tuning (Sort Priority, Material, Potion, Toggles, Enchantment) is hidden and
+        // left at its curated defaults. Expert shows everything. (Simple never reaches this screen.)
+        final boolean advanced = OrganizerConfig.get().isAdvancedMode();
 
         // -- Selected slot info --
         if (selectedSlot >= 0) {
@@ -672,171 +724,170 @@ public class SortingOrderConfigScreen extends Screen {
             if (selectedSlot >= 100) slotName = EQUIP_LABELS[selectedSlot - 100];
             else if (selectedSlot < 9) slotName = "Hotbar " + (selectedSlot + 1);
             else slotName = "Inv " + (selectedSlot - 9 + 1);
-            context.drawTextWithShadow(textRenderer, Text.literal("Selected: " + slotName), px + 2, curY, 0xFFFFFF55);
+            context.text(font, Component.literal("Selected: " + slotName), px + 2, curY, 0xFFFFFF55);
             curY += 11;
             Integer tier = tierAssignments.get(selectedSlot);
-            context.drawTextWithShadow(textRenderer, Text.literal("Tier: " + (tier != null ? tier : "-")),
+            context.text(font, Component.literal("Tier: " + (tier != null ? tier : "-")),
                     px + 2, curY, tier != null ? 0xFF55FF55 : 0xFF888888);
             curY += 15;
         }
 
         // -- Sort Priority --
         panelStartY = curY;
-        context.drawTextWithShadow(textRenderer, Text.literal("Sort Priority:"), px + 2, curY, 0xFFFFAA00);
-        curY += 13;
-        sectionFirstItemY[0] = curY + scrollOffset;
-        for (int i = 0; i < criteriaOrder.size(); i++) {
-            String name = criteriaOrder.get(i);
-            String display = (i + 1) + ". " + capitalize(name);
-            boolean isBeingDragged = isDragging && dragSection == 0 && dragIndex == i;
-            int textColor = isBeingDragged ? 0xFF888888 : 0xFFFFFFFF;
-            context.drawTextWithShadow(textRenderer, Text.literal(display), px + 6, curY, textColor);
-            // Drop indicator line
-            if (isDragging && dragSection == 0) {
-                int targetIdx = getDropIndex(0, (int) dragCurrentY);
-                if (targetIdx == i) context.fill(px + 2, curY - 1, px + 125, curY, 0xFFFFFF00);
-            }
+        if (!advanced) {
+            boolean exp = drawSectionHeader(context, px, curY, "Sort Priority", 0);
             curY += 13;
-        }
+            if (exp) {
+                sectionFirstItemY[0] = curY + scrollOffset;
+                for (int i = 0; i < criteriaOrder.size(); i++) {
+                    String name = criteriaOrder.get(i);
+                    String display = (i + 1) + ". " + capitalize(name);
+                    boolean isBeingDragged = isDragging && dragSection == 0 && dragIndex == i;
+                    int textColor = isBeingDragged ? 0xFF888888 : 0xFFFFFFFF;
+                    context.text(font, Component.literal(display), px + 6, curY, textColor);
+                    if (isDragging && dragSection == 0) {
+                        int targetIdx = getDropIndex(0, (int) dragCurrentY);
+                        if (targetIdx == i) context.fill(px + 2, curY - 1, px + 125, curY, 0xFFFFFF00);
+                    }
+                    curY += 13;
+                }
+            } else sectionFirstItemY[0] = Integer.MIN_VALUE / 2;
+        } else sectionFirstItemY[0] = Integer.MIN_VALUE / 2;
 
         // -- Material Order --
-        curY += 6;
-        context.drawTextWithShadow(textRenderer, Text.literal("Material Order:"), px + 2, curY, 0xFFFFAA00);
-        curY += 13;
-        sectionFirstItemY[1] = curY + scrollOffset;
-        for (int i = 0; i < materialOrder.size(); i++) {
-            String name = materialOrder.get(i);
-            String display = (i + 1) + ". " + capitalize(name);
-            boolean isBeingDragged = isDragging && dragSection == 1 && dragIndex == i;
-            int textColor = isBeingDragged ? 0xFF666666 : (0xFF000000 | getMaterialColor(name));
-            context.drawTextWithShadow(textRenderer, Text.literal(display), px + 6, curY, textColor);
-            if (isDragging && dragSection == 1) {
-                int targetIdx = getDropIndex(1, (int) dragCurrentY);
-                if (targetIdx == i) context.fill(px + 2, curY - 1, px + 125, curY, 0xFFFFFF00);
-            }
+        if (!advanced) {
+            curY += 6;
+            boolean exp = drawSectionHeader(context, px, curY, "Material Order", 1);
             curY += 13;
-        }
+            if (exp) {
+                sectionFirstItemY[1] = curY + scrollOffset;
+                for (int i = 0; i < materialOrder.size(); i++) {
+                    String name = materialOrder.get(i);
+                    String display = (i + 1) + ". " + capitalize(name);
+                    boolean isBeingDragged = isDragging && dragSection == 1 && dragIndex == i;
+                    int textColor = isBeingDragged ? 0xFF666666 : (0xFF000000 | getMaterialColor(name));
+                    context.text(font, Component.literal(display), px + 6, curY, textColor);
+                    if (isDragging && dragSection == 1) {
+                        int targetIdx = getDropIndex(1, (int) dragCurrentY);
+                        if (targetIdx == i) context.fill(px + 2, curY - 1, px + 125, curY, 0xFFFFFF00);
+                    }
+                    curY += 13;
+                }
+            } else sectionFirstItemY[1] = Integer.MIN_VALUE / 2;
+        } else sectionFirstItemY[1] = Integer.MIN_VALUE / 2;
 
         // -- Potion Type Order --
-        curY += 6;
-        context.drawTextWithShadow(textRenderer, Text.literal("Potion Type Order:"), px + 2, curY, 0xFFFFAA00);
-        curY += 13;
-        sectionFirstItemY[2] = curY + scrollOffset;
-        for (int i = 0; i < potionTypeOrder.size(); i++) {
-            String name = potionTypeOrder.get(i);
-            String display = (i + 1) + ". " + formatPotionTypeName(name);
-            boolean isBeingDragged = isDragging && dragSection == 2 && dragIndex == i;
-            int textColor = isBeingDragged ? 0xFF8888AA : 0xFF88AAFF;
-            context.drawTextWithShadow(textRenderer, Text.literal(display), px + 6, curY, textColor);
-            if (isDragging && dragSection == 2) {
-                int targetIdx = getDropIndex(2, (int) dragCurrentY);
-                if (targetIdx == i) context.fill(px + 2, curY - 1, px + 125, curY, 0xFFFFFF00);
-            }
+        if (!advanced) {
+            curY += 6;
+            boolean exp = drawSectionHeader(context, px, curY, "Potion Type Order", 2);
             curY += 13;
-        }
+            if (exp) {
+                sectionFirstItemY[2] = curY + scrollOffset;
+                for (int i = 0; i < potionTypeOrder.size(); i++) {
+                    String name = potionTypeOrder.get(i);
+                    String display = (i + 1) + ". " + formatPotionTypeName(name);
+                    boolean isBeingDragged = isDragging && dragSection == 2 && dragIndex == i;
+                    int textColor = isBeingDragged ? 0xFF8888AA : 0xFF88AAFF;
+                    context.text(font, Component.literal(display), px + 6, curY, textColor);
+                    if (isDragging && dragSection == 2) {
+                        int targetIdx = getDropIndex(2, (int) dragCurrentY);
+                        if (targetIdx == i) context.fill(px + 2, curY - 1, px + 125, curY, 0xFFFFFF00);
+                    }
+                    curY += 13;
+                }
+            } else sectionFirstItemY[2] = Integer.MIN_VALUE / 2;
+        } else sectionFirstItemY[2] = Integer.MIN_VALUE / 2;
 
         // -- Toggles --
-        curY += 8;
-        context.drawTextWithShadow(textRenderer, Text.literal("Toggles:"), px + 2, curY, 0xFFFFAA00);
-        curY += 13;
-
-        boolean hoverEnch = isHoveredArea(mouseX, mouseY, px, curY - 1, 180, 12);
-        context.fill(px + 2, curY - 1, px + 182, curY + 11, hoverEnch ? 0xFF334455 : 0xFF333333);
-        String enchText = "Enchant: " + (enchantDesc ? "More=Better" : "Less=Better");
-        context.drawTextWithShadow(textRenderer, Text.literal(enchText), px + 6, curY, 0xFFCCCCCC);
-        curY += 14;
-
-        boolean hoverDur = isHoveredArea(mouseX, mouseY, px, curY - 1, 180, 12);
-        context.fill(px + 2, curY - 1, px + 182, curY + 11, hoverDur ? 0xFF334455 : 0xFF333333);
-        String durText = "Durability: " + (durabilityDesc ? "More=Better" : "Less=Better");
-        context.drawTextWithShadow(textRenderer, Text.literal(durText), px + 6, curY, 0xFFCCCCCC);
-        curY += 16;
-
-        // -- Food Order --
-        context.drawTextWithShadow(textRenderer, Text.literal("Food Order:"), px + 2, curY, 0xFFFFAA00);
-        curY += 13;
-        sectionFirstItemY[3] = curY + scrollOffset;
-        for (int i = 0; i < foodOrder.size(); i++) {
-            String name = foodOrder.get(i);
-            String display = (i + 1) + ". " + formatFoodName(name);
-            boolean isBeingDragged = isDragging && dragSection == 3 && dragIndex == i;
-            int textColor = isBeingDragged ? 0xFF886644 : 0xFFFFCC88;
-            context.drawTextWithShadow(textRenderer, Text.literal(display), px + 6, curY, textColor);
-            if (isDragging && dragSection == 3) {
-                int targetIdx = getDropIndex(3, (int) dragCurrentY);
-                if (targetIdx == i) context.fill(px + 2, curY - 1, px + 125, curY, 0xFFFFFF00);
-            }
+        if (!advanced) {
+            curY += 8;
+            boolean exp = drawSectionHeader(context, px, curY, "Toggles", SEC_TOGGLES);
             curY += 13;
+            if (exp) {
+                boolean hoverEnch = isHoveredArea(mouseX, mouseY, px, curY - 1, 180, 12);
+                context.fill(px + 2, curY - 1, px + 182, curY + 11, hoverEnch ? 0xFF334455 : 0xFF333333);
+                String enchText = "Enchant: " + (enchantDesc ? "More=Better" : "Less=Better");
+                context.text(font, Component.literal(enchText), px + 6, curY, 0xFFCCCCCC);
+                enchantToggleRect = new int[]{px, curY - 1, 184, 12};
+                curY += 14;
+
+                boolean hoverDur = isHoveredArea(mouseX, mouseY, px, curY - 1, 180, 12);
+                context.fill(px + 2, curY - 1, px + 182, curY + 11, hoverDur ? 0xFF334455 : 0xFF333333);
+                String durText = "Durability: " + (durabilityDesc ? "More=Better" : "Less=Better");
+                context.text(font, Component.literal(durText), px + 6, curY, 0xFFCCCCCC);
+                durabilityToggleRect = new int[]{px, curY - 1, 184, 12};
+                curY += 16;
+            }
         }
+
+        // -- Food Order: hidden. It was a leftover from the old built-in "g" groups and is now redundant
+        // with the materialized "Group food" section below. The saved order still drives sorting; we just
+        // don't show/edit it here. (Marked unreachable for drag handling.)
+        sectionFirstItemY[3] = Integer.MIN_VALUE / 2;
 
         // -- Enchantment Order --
-        curY += 8;
-        context.drawTextWithShadow(textRenderer, Text.literal("Enchantment Order:"), px + 2, curY, 0xFFFFAA00);
-        curY += 13;
-        sectionFirstItemY[4] = curY + scrollOffset;
-        for (int i = 0; i < enchantOrder.size(); i++) {
-            String name = enchantOrder.get(i);
-            String display = (i + 1) + ". " + formatEnchantName(name);
-            boolean isBeingDragged = isDragging && dragSection == 4 && dragIndex == i;
-            int textColor = isBeingDragged ? 0xFF886688 : 0xFFDD88FF;
-            context.drawTextWithShadow(textRenderer, Text.literal(display), px + 6, curY, textColor);
-            if (isDragging && dragSection == 4) {
-                int targetIdx = getDropIndex(4, (int) dragCurrentY);
-                if (targetIdx == i) context.fill(px + 2, curY - 1, px + 125, curY, 0xFFFFFF00);
-            }
+        if (!advanced) {
+            curY += 8;
+            boolean exp = drawSectionHeader(context, px, curY, "Enchantment Order", 4);
             curY += 13;
-        }
+            if (exp) {
+                sectionFirstItemY[4] = curY + scrollOffset;
+                for (int i = 0; i < enchantOrder.size(); i++) {
+                    String name = enchantOrder.get(i);
+                    String display = (i + 1) + ". " + formatEnchantName(name);
+                    boolean isBeingDragged = isDragging && dragSection == 4 && dragIndex == i;
+                    int textColor = isBeingDragged ? 0xFF886688 : 0xFFDD88FF;
+                    context.text(font, Component.literal(display), px + 6, curY, textColor);
+                    if (isDragging && dragSection == 4) {
+                        int targetIdx = getDropIndex(4, (int) dragCurrentY);
+                        if (targetIdx == i) context.fill(px + 2, curY - 1, px + 125, curY, 0xFFFFFF00);
+                    }
+                    curY += 13;
+                }
+            } else sectionFirstItemY[4] = Integer.MIN_VALUE / 2;
+        } else sectionFirstItemY[4] = Integer.MIN_VALUE / 2;
 
         // -- Potion Order --
-        curY += 8;
-        context.drawTextWithShadow(textRenderer, Text.literal("Potion Order:"), px + 2, curY, 0xFFFFAA00);
-        curY += 13;
-        sectionFirstItemY[5] = curY + scrollOffset;
-        for (int i = 0; i < potionOrder.size(); i++) {
-            String name = potionOrder.get(i);
-            String display = (i + 1) + ". " + formatPotionName(name);
-            boolean isBeingDragged = isDragging && dragSection == 5 && dragIndex == i;
-            int textColor = isBeingDragged ? 0xFF886644 : 0xFFFF88BB;
-            context.drawTextWithShadow(textRenderer, Text.literal(display), px + 6, curY, textColor);
-            if (isDragging && dragSection == 5) {
-                int targetIdx = getDropIndex(5, (int) dragCurrentY);
-                if (targetIdx == i) context.fill(px + 2, curY - 1, px + 125, curY, 0xFFFFFF00);
-            }
+        if (!advanced) {
+            curY += 8;
+            boolean exp = drawSectionHeader(context, px, curY, "Potion Order", 5);
             curY += 13;
-        }
+            if (exp) {
+                sectionFirstItemY[5] = curY + scrollOffset;
+                for (int i = 0; i < potionOrder.size(); i++) {
+                    String name = potionOrder.get(i);
+                    String display = (i + 1) + ". " + formatPotionName(name);
+                    boolean isBeingDragged = isDragging && dragSection == 5 && dragIndex == i;
+                    int textColor = isBeingDragged ? 0xFF886644 : 0xFFFF88BB;
+                    context.text(font, Component.literal(display), px + 6, curY, textColor);
+                    if (isDragging && dragSection == 5) {
+                        int targetIdx = getDropIndex(5, (int) dragCurrentY);
+                        if (targetIdx == i) context.fill(px + 2, curY - 1, px + 125, curY, 0xFFFFFF00);
+                    }
+                    curY += 13;
+                }
+            } else sectionFirstItemY[5] = Integer.MIN_VALUE / 2;
+        } else sectionFirstItemY[5] = Integer.MIN_VALUE / 2;
 
-        // -- Block Order --
-        curY += 8;
-        context.drawTextWithShadow(textRenderer, Text.literal("Block Order:"), px + 2, curY, 0xFFFFAA00);
-        curY += 13;
-        sectionFirstItemY[6] = curY + scrollOffset;
-        for (int i = 0; i < blockOrder.size(); i++) {
-            String name = blockOrder.get(i);
-            String display = (i + 1) + ". " + formatBlockName(name);
-            boolean isBeingDragged = isDragging && dragSection == 6 && dragIndex == i;
-            int textColor = isBeingDragged ? 0xFF888866 : 0xFFFFFF88;
-            context.drawTextWithShadow(textRenderer, Text.literal(display), px + 6, curY, textColor);
-            if (isDragging && dragSection == 6) {
-                int targetIdx = getDropIndex(6, (int) dragCurrentY);
-                if (targetIdx == i) context.fill(px + 2, curY - 1, px + 125, curY, 0xFFFFFF00);
-            }
-            curY += 13;
-        }
+        // -- Block Order: hidden (same reason as Food Order) — now covered by the "Group blocks" section.
+        sectionFirstItemY[6] = Integer.MIN_VALUE / 2;
 
-        // -- Custom Group Orders --
+        // -- Group Orders (built-in + custom; each foldable, closed by default) --
         for (int gi = 0; gi < cgNames.size(); gi++) {
             int secIdx = 7 + gi;
             curY += 8;
-            context.drawTextWithShadow(textRenderer,
-                Text.literal("Group \"" + cgNames.get(gi) + "\" Order:"), px + 2, curY, 0xFFFFAA00);
+            boolean exp = drawSectionHeader(context, px, curY, "Group \"" + cgNames.get(gi) + "\"", secIdx);
             curY += 13;
-            if (secIdx < sectionFirstItemY.length) sectionFirstItemY[secIdx] = curY + scrollOffset;
+            if (secIdx < sectionFirstItemY.length) {
+                if (!exp) { sectionFirstItemY[secIdx] = Integer.MIN_VALUE / 2; continue; }
+                sectionFirstItemY[secIdx] = curY + scrollOffset;
+            }
             List<String> cgOrder = customGroupOrders.get(gi);
             for (int i = 0; i < cgOrder.size(); i++) {
                 String display = (i + 1) + ". " + formatItemIdName(cgOrder.get(i));
                 boolean isBeingDragged = isDragging && dragSection == secIdx && dragIndex == i;
                 int textColor = isBeingDragged ? 0xFF666666 : 0xFF88CCFF;
-                context.drawTextWithShadow(textRenderer, Text.literal(display), px + 6, curY, textColor);
+                context.text(font, Component.literal(display), px + 6, curY, textColor);
                 if (isDragging && dragSection == secIdx) {
                     int targetIdx = getDropIndex(secIdx, (int) dragCurrentY);
                     if (targetIdx == i) context.fill(px + 2, curY - 1, px + 125, curY, 0xFFFFFF00);
@@ -847,6 +898,12 @@ public class SortingOrderConfigScreen extends Screen {
 
         context.disableScissor();
 
+        // Recompute the scroll range from the ACTUAL rendered content height, so adding more entries
+        // (e.g. all potions) keeps the whole list reachable instead of clipping at a fixed limit.
+        int contentBottom = curY + scrollOffset;   // curY = py - scrollOffset + totalContentHeight
+        maxScroll = Math.max(0, (contentBottom - py) - panelH + 16);
+        if (scrollOffset > maxScroll) scrollOffset = maxScroll;
+
         // Draw dragged item floating at mouse position (outside scissor)
         if (isDragging && dragSection >= 0 && dragIndex >= 0) {
             List<String> list = getDragList();
@@ -854,18 +911,25 @@ public class SortingOrderConfigScreen extends Screen {
                 String dragName = getDragDisplayName(dragSection, list.get(dragIndex));
                 context.fill((int) dragCurrentX - 2, (int) dragCurrentY - 2,
                              (int) dragCurrentX + 130, (int) dragCurrentY + 10, 0xDD000000);
-                context.drawHorizontalLine((int) dragCurrentX - 2, (int) dragCurrentX + 130, (int) dragCurrentY - 2, 0xFFFFFF00);
-                context.drawHorizontalLine((int) dragCurrentX - 2, (int) dragCurrentX + 130, (int) dragCurrentY + 10, 0xFFFFFF00);
-                context.drawTextWithShadow(textRenderer, Text.literal("\u00a7e" + dragName),
+                context.horizontalLine((int) dragCurrentX - 2, (int) dragCurrentX + 130, (int) dragCurrentY - 2, 0xFFFFFF00);
+                context.horizontalLine((int) dragCurrentX - 2, (int) dragCurrentX + 130, (int) dragCurrentY + 10, 0xFFFFFF00);
+                context.text(font, Component.literal("\u00a7e" + dragName),
                         (int) dragCurrentX + 2, (int) dragCurrentY, 0xFFFFFF00);
             }
         }
         
-        // Draw scroll indicator
-        if (MAX_SCROLL > 0) {
-            int scrollBarH = Math.max(20, panelH * panelH / (panelH + MAX_SCROLL));
-            int scrollBarY = py + (int)((float)scrollOffset / MAX_SCROLL * (panelH - scrollBarH));
-            context.fill(px + panelW - 6, scrollBarY, px + panelW - 2, scrollBarY + scrollBarH, 0xFF888888);
+        // Draw scrollbar (draggable)
+        if (maxScroll > 0) {
+            int scrollBarH = Math.max(20, panelH * panelH / (panelH + maxScroll));
+            int scrollBarY = py + (int)((float)scrollOffset / maxScroll * (panelH - scrollBarH));
+            int sbX = px + panelW - SCROLLBAR_WIDTH - 1;
+            // Track background
+            context.fill(sbX, py, sbX + SCROLLBAR_WIDTH, py + panelH, 0xFF1A1A1A);
+            // Handle (highlight on hover or drag)
+            boolean hovered = mouseX >= sbX && mouseX < sbX + SCROLLBAR_WIDTH
+                    && mouseY >= scrollBarY && mouseY < scrollBarY + scrollBarH;
+            int handleColor = (draggingScrollbar || hovered) ? 0xFFCCCCCC : 0xFF888888;
+            context.fill(sbX, scrollBarY, sbX + SCROLLBAR_WIDTH, scrollBarY + scrollBarH, handleColor);
         }
     }
 
@@ -929,6 +993,7 @@ public class SortingOrderConfigScreen extends Screen {
         int px = width - panelW - rightEdgeMargin;
         if (mouseX < px || mouseX > px + panelW) return -1;
         for (int s = 0; s < 7; s++) {
+            if (!sectionExpanded(s)) continue; // collapsed: no draggable rows
             int startY = sectionFirstItemY[s] - scrollOffset;
             List<String> list = s == 0 ? criteriaOrder : s == 1 ? materialOrder : s == 2 ? potionTypeOrder : s == 3 ? foodOrder : s == 4 ? enchantOrder : s == 5 ? potionOrder : blockOrder;
             int endY = startY + list.size() * 13;
@@ -938,10 +1003,11 @@ public class SortingOrderConfigScreen extends Screen {
                 return s;
             }
         }
-        // Custom group sections
+        // Group sections
         for (int gi = 0; gi < cgNames.size(); gi++) {
             int s = 7 + gi;
             if (s >= sectionFirstItemY.length) break;
+            if (!sectionExpanded(s)) continue; // collapsed
             int startY = sectionFirstItemY[s] - scrollOffset;
             List<String> list = customGroupOrders.get(gi);
             int endY = startY + list.size() * 13;
@@ -954,8 +1020,37 @@ public class SortingOrderConfigScreen extends Screen {
         return -1;
     }
 
+    /** Compute scrollbar geometry (x, y_top, y_bottom, handle_y, handle_h). Returns null if no scroll needed. */
+    private int[] getScrollbarRect() {
+        if (maxScroll <= 0) return null;
+        int rightEdgeMargin = Math.max(10, width / 50);
+        int panelW = Math.max(160, Math.min(220, width / 3));
+        int px = width - panelW - rightEdgeMargin;
+        int py = gridY + 24;
+        int panelH = height - py - 34;
+        int scrollBarH = Math.max(20, panelH * panelH / (panelH + maxScroll));
+        int scrollBarY = py + (int)((float)scrollOffset / maxScroll * (panelH - scrollBarH));
+        int sbX = px + panelW - SCROLLBAR_WIDTH - 1;
+        return new int[]{sbX, py, py + panelH, scrollBarY, scrollBarH};
+    }
+
+    private void scrollbarDragTo(double mouseY) {
+        int[] r = getScrollbarRect();
+        if (r == null) return;
+        int trackTop = r[1], trackBottom = r[2], handleH = r[4];
+        int trackHeight = trackBottom - trackTop;
+        if (trackHeight <= handleH) return;
+        double rel = (mouseY - trackTop - handleH / 2.0) / (trackHeight - handleH);
+        rel = Math.max(0.0, Math.min(1.0, rel));
+        scrollOffset = (int)(rel * maxScroll);
+    }
+
     @Override
-    public boolean mouseDragged(Click click, double deltaX, double deltaY) {
+    public boolean mouseDragged(MouseButtonEvent click, double deltaX, double deltaY) {
+        if (click.button() == 0 && draggingScrollbar) {
+            scrollbarDragTo(click.y());
+            return true;
+        }
         if (click.button() == 0 && isDragging) {
             dragCurrentX = click.x();
             dragCurrentY = click.y();
@@ -965,7 +1060,11 @@ public class SortingOrderConfigScreen extends Screen {
     }
 
     @Override
-    public boolean mouseReleased(Click click) {
+    public boolean mouseReleased(MouseButtonEvent click) {
+        if (click.button() == 0 && draggingScrollbar) {
+            draggingScrollbar = false;
+            return true;
+        }
         if (click.button() == 0 && isDragging) {
             int targetIdx = getDropIndex(dragSection, (int) click.y());
             List<String> list = getDragList();
@@ -1009,6 +1108,20 @@ public class SortingOrderConfigScreen extends Screen {
             sb.append(capitalize(part));
         }
         return sb.toString();
+    }
+
+    /** Every potion id (path, e.g. "long_healing") from the registry, so all potions are orderable. */
+    private static List<String> allPotionIds() {
+        List<String> out = new ArrayList<>();
+        try {
+            for (net.minecraft.resources.Identifier id : net.minecraft.core.registries.BuiltInRegistries.POTION.keySet()) {
+                String path = id.getPath();
+                if (path.equals("empty")) continue;
+                out.add(path);
+            }
+        } catch (Throwable ignored) {}
+        out.sort(String::compareToIgnoreCase);
+        return out;
     }
 
     private String formatBlockName(String id) {
@@ -1071,63 +1184,79 @@ public class SortingOrderConfigScreen extends Screen {
     // --- Icon/text helpers (same as VisualInventoryConfigScreen) ---
 
     private ItemStack getIconForText(String text) {
-        if (text.equals("empty")) return new ItemStack(Items.BARRIER);
+        if (text.equals("empty")) return safeIcon(Items.BARRIER);
         if (text.equals("any")) return ItemStack.EMPTY;
         if (text.startsWith("g:")) {
             switch (text.substring(2)) {
-                case "weapons": return new ItemStack(Items.IRON_SWORD);
-                case "tools": return new ItemStack(Items.IRON_PICKAXE);
-                case "armor": return new ItemStack(Items.IRON_CHESTPLATE);
-                case "blocks": return new ItemStack(Items.OAK_PLANKS);
-                case "food": return new ItemStack(Items.COOKED_BEEF);
-                case "utility": return new ItemStack(Items.TORCH);
-                case "valuables": return new ItemStack(Items.DIAMOND);
-                case "potions": return new ItemStack(Items.POTION);
-                case "misc":     return new ItemStack(Items.ENDER_PEARL);
-                case "logs":     return new ItemStack(Items.OAK_LOG);
-                case "boats":    return new ItemStack(Items.OAK_BOAT);
-                case "plants":   return new ItemStack(Items.DANDELION);
-                case "stone":    return new ItemStack(Items.STONE);
-                case "ores":     return new ItemStack(Items.IRON_ORE);
-                case "cooked":   return new ItemStack(Items.COOKED_BEEF);
-                case "rawfood":  return new ItemStack(Items.BEEF);
-                case "nether":   return new ItemStack(Items.NETHERRACK);
-                case "end":      return new ItemStack(Items.END_STONE);
-                case "partial":  return new ItemStack(Items.OAK_SLAB);
-                case "redstone": return new ItemStack(Items.REDSTONE);
-                case "creative": return new ItemStack(Items.COMMAND_BLOCK);
+                case "weapons": return safeIcon(Items.IRON_SWORD);
+                case "tools": return safeIcon(Items.IRON_PICKAXE);
+                case "armor": return safeIcon(Items.IRON_CHESTPLATE);
+                case "blocks": return safeIcon(Items.OAK_PLANKS);
+                case "food": return safeIcon(Items.COOKED_BEEF);
+                case "utility": return safeIcon(Items.TORCH);
+                case "valuables": return safeIcon(Items.DIAMOND);
+                case "potions": return safeIcon(Items.POTION);
+                case "misc":     return safeIcon(Items.ENDER_PEARL);
+                case "logs":     return safeIcon(Items.OAK_LOG);
+                case "boats":    return safeIcon(Items.OAK_BOAT);
+                case "plants":   return safeIcon(Items.DANDELION);
+                case "stone":    return safeIcon(Items.STONE);
+                case "ores":     return safeIcon(Items.IRON_ORE);
+                case "cooked":   return safeIcon(Items.COOKED_BEEF);
+                case "rawfood":  return safeIcon(Items.BEEF);
+                case "nether":   return safeIcon(Items.NETHERRACK);
+                case "end":      return safeIcon(Items.END_STONE);
+                case "partial":  return safeIcon(Items.OAK_SLAB);
+                case "redstone": return safeIcon(Items.REDSTONE);
+                case "creative": return safeIcon(Items.COMMAND_BLOCK);
                 default: return ItemStack.EMPTY;
             }
         }
         if (text.startsWith("t:")) {
             switch (text.substring(2)) {
-                case "sword": return new ItemStack(Items.IRON_SWORD);
-                case "pickaxe": return new ItemStack(Items.IRON_PICKAXE);
-                case "axe": return new ItemStack(Items.IRON_AXE);
-                case "shovel": return new ItemStack(Items.IRON_SHOVEL);
-                case "hoe": return new ItemStack(Items.IRON_HOE);
-                case "bow": return new ItemStack(Items.BOW);
-                case "crossbow": return new ItemStack(Items.CROSSBOW);
-                case "trident": return new ItemStack(Items.TRIDENT);
-                case "mace": return new ItemStack(Items.MACE);
-                case "helmet": return new ItemStack(Items.IRON_HELMET);
-                case "chestplate": return new ItemStack(Items.IRON_CHESTPLATE);
-                case "leggings": return new ItemStack(Items.IRON_LEGGINGS);
-                case "boots": return new ItemStack(Items.IRON_BOOTS);
-                case "shield": return new ItemStack(Items.SHIELD);
-                case "elytra": return new ItemStack(Items.ELYTRA);
-                case "fishing_rod": return new ItemStack(Items.FISHING_ROD);
-                case "shears": return new ItemStack(Items.SHEARS);
-                case "flint_and_steel": return new ItemStack(Items.FLINT_AND_STEEL);
+                case "sword": return safeIcon(Items.IRON_SWORD);
+                case "pickaxe": return safeIcon(Items.IRON_PICKAXE);
+                case "axe": return safeIcon(Items.IRON_AXE);
+                case "shovel": return safeIcon(Items.IRON_SHOVEL);
+                case "hoe": return safeIcon(Items.IRON_HOE);
+                case "bow": return safeIcon(Items.BOW);
+                case "crossbow": return safeIcon(Items.CROSSBOW);
+                case "trident": return safeIcon(Items.TRIDENT);
+                case "mace": return safeIcon(Items.MACE);
+                case "helmet": return safeIcon(Items.IRON_HELMET);
+                case "chestplate": return safeIcon(Items.IRON_CHESTPLATE);
+                case "leggings": return safeIcon(Items.IRON_LEGGINGS);
+                case "boots": return safeIcon(Items.IRON_BOOTS);
+                case "shield": return safeIcon(Items.SHIELD);
+                case "elytra": return safeIcon(Items.ELYTRA);
+                case "fishing_rod": return safeIcon(Items.FISHING_ROD);
+                case "shears": return safeIcon(Items.SHEARS);
+                case "flint_and_steel": return safeIcon(Items.FLINT_AND_STEEL);
                 default: return ItemStack.EMPTY;
             }
         }
-        if (text.startsWith("cg:")) return new ItemStack(Items.CHEST);
+        if (text.startsWith("cg:")) {
+            String name = text.substring(3);
+            // Built-in groups are materialized as custom groups but keep their iconic look.
+            for (String bn : com.example.inventoryorganizer.InventorySorter.BUILTIN_GROUP_NAMES) {
+                if (bn.equals(name)) return getIconForText("g:" + name);
+            }
+            // Real custom group: show its first member item, else a chest.
+            java.util.List<String> members = config.getCustomGroup(name);
+            if (!members.isEmpty() && members.get(0) != null && !members.get(0).isEmpty()) {
+                try {
+                    String mid = members.get(0).contains(":") ? members.get(0) : "minecraft:" + members.get(0);
+                    Item it = BuiltInRegistries.ITEM.getValue(Identifier.parse(mid));
+                    if (it != null && it != Items.AIR) return new ItemStack(net.minecraft.core.Holder.direct(it));
+                } catch (Exception ignored) {}
+            }
+            return safeIcon(Items.CHEST);
+        }
         if (text.contains(":")) {
             try {
-                Identifier id = Identifier.of(text);
-                Item item = Registries.ITEM.get(id);
-                if (item != null && item != Items.AIR) return new ItemStack(item);
+                Identifier id = Identifier.parse(text);
+                Item item = BuiltInRegistries.ITEM.getValue(id);
+                if (item != null && item != Items.AIR) return new ItemStack(net.minecraft.core.Holder.direct(item));
             } catch (Exception ignored) {}
         }
         return ItemStack.EMPTY;
@@ -1148,11 +1277,11 @@ public class SortingOrderConfigScreen extends Screen {
 
     private ItemStack getDefaultEquipIcon(int equipIdx) {
         switch (equipIdx) {
-            case 0: return new ItemStack(Items.IRON_HELMET);
-            case 1: return new ItemStack(Items.IRON_CHESTPLATE);
-            case 2: return new ItemStack(Items.IRON_LEGGINGS);
-            case 3: return new ItemStack(Items.IRON_BOOTS);
-            case 4: return new ItemStack(Items.SHIELD);
+            case 0: return safeIcon(Items.IRON_HELMET);
+            case 1: return safeIcon(Items.IRON_CHESTPLATE);
+            case 2: return safeIcon(Items.IRON_LEGGINGS);
+            case 3: return safeIcon(Items.IRON_BOOTS);
+            case 4: return safeIcon(Items.SHIELD);
             default: return ItemStack.EMPTY;
         }
     }
@@ -1160,7 +1289,7 @@ public class SortingOrderConfigScreen extends Screen {
     // --- Mouse click ---
 
     @Override
-    public boolean mouseClicked(Click click, boolean bl) {
+    public boolean mouseClicked(MouseButtonEvent click, boolean bl) {
         double mouseX = click.x();
         double mouseY = click.y();
         int button = click.button();
@@ -1174,6 +1303,22 @@ public class SortingOrderConfigScreen extends Screen {
                 OrganizerConfig.get().save();
             }
             return true;
+        }
+
+        // Scrollbar drag start
+        if (button == 0) {
+            int[] r = getScrollbarRect();
+            if (r != null) {
+                int sbX = r[0], trackTop = r[1], trackBottom = r[2], handleY = r[3], handleH = r[4];
+                if (mouseX >= sbX && mouseX < sbX + SCROLLBAR_WIDTH && mouseY >= trackTop && mouseY < trackBottom) {
+                    draggingScrollbar = true;
+                    // If clicked outside handle, jump to that position
+                    if (mouseY < handleY || mouseY >= handleY + handleH) {
+                        scrollbarDragTo(mouseY);
+                    }
+                    return true;
+                }
+            }
         }
 
         if (button == 0) {
@@ -1252,146 +1397,26 @@ public class SortingOrderConfigScreen extends Screen {
                 }
             }
 
-            // --- Sort config clicks (right panel) ---
-            int rightEdgeMargin = Math.max(10, width / 50);
-            int panelW = Math.max(160, Math.min(220, width / 3));
-            int px = width - panelW - rightEdgeMargin;
-            int curY = gridY + 24 - scrollOffset;
-
-            // Skip selected slot info area
-            if (selectedSlot >= 0) curY += 26;
-
-            // Sort Priority title
-            curY += 13;
-            // Criteria up/down arrows
-            for (int i = 0; i < criteriaOrder.size(); i++) {
-                if (i > 0 && isHoveredArea((int) mouseX, (int) mouseY, px + 130, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(criteriaOrder, i, i - 1);
+            // --- Right panel: foldable section headers + the two toggles ---
+            // Positions were recorded during render, so click handling can't drift out of sync with
+            // the layout. Reordering within an open section is done by dragging (handled above).
+            for (int[] h : headerHits) {
+                if (mouseX >= h[0] && mouseX < h[0] + h[2] && mouseY >= h[1] && mouseY < h[1] + h[3]) {
+                    int key = h[4];
+                    if (expandedSections.contains(key)) expandedSections.remove(key);
+                    else expandedSections.add(key);
                     return true;
                 }
-                if (i < criteriaOrder.size() - 1 && isHoveredArea((int) mouseX, (int) mouseY, px + 147, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(criteriaOrder, i, i + 1);
-                    return true;
-                }
-                curY += 13;
             }
-
-            // Material Order title
-            curY += 6 + 13;
-            for (int i = 0; i < materialOrder.size(); i++) {
-                if (i > 0 && isHoveredArea((int) mouseX, (int) mouseY, px + 130, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(materialOrder, i, i - 1);
-                    return true;
-                }
-                if (i < materialOrder.size() - 1 && isHoveredArea((int) mouseX, (int) mouseY, px + 147, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(materialOrder, i, i + 1);
-                    return true;
-                }
-                curY += 13;
-            }
-
-            // Potion Type Order title
-            curY += 6 + 13;
-            for (int i = 0; i < potionTypeOrder.size(); i++) {
-                if (i > 0 && isHoveredArea((int) mouseX, (int) mouseY, px + 115, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(potionTypeOrder, i, i - 1);
-                    return true;
-                }
-                if (i < potionTypeOrder.size() - 1 && isHoveredArea((int) mouseX, (int) mouseY, px + 132, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(potionTypeOrder, i, i + 1);
-                    return true;
-                }
-                curY += 13;
-            }
-
-            // Toggles title
-            curY += 8 + 13;
-
-            // Enchant toggle
-            if (isHoveredArea((int) mouseX, (int) mouseY, px, curY - 1, 180, 12)) {
+            if (enchantToggleRect != null
+                    && isHoveredArea((int) mouseX, (int) mouseY, enchantToggleRect[0], enchantToggleRect[1], enchantToggleRect[2], enchantToggleRect[3])) {
                 enchantDesc = !enchantDesc;
                 return true;
             }
-            curY += 14;
-
-            // Durability toggle
-            if (isHoveredArea((int) mouseX, (int) mouseY, px, curY - 1, 180, 12)) {
+            if (durabilityToggleRect != null
+                    && isHoveredArea((int) mouseX, (int) mouseY, durabilityToggleRect[0], durabilityToggleRect[1], durabilityToggleRect[2], durabilityToggleRect[3])) {
                 durabilityDesc = !durabilityDesc;
                 return true;
-            }
-            curY += 16;
-
-            // Food Order title
-            curY += 13;
-            for (int i = 0; i < foodOrder.size(); i++) {
-                if (i > 0 && isHoveredArea((int) mouseX, (int) mouseY, px + 115, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(foodOrder, i, i - 1);
-                    return true;
-                }
-                if (i < foodOrder.size() - 1 && isHoveredArea((int) mouseX, (int) mouseY, px + 132, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(foodOrder, i, i + 1);
-                    return true;
-                }
-                curY += 13;
-            }
-
-            // Enchantment Order title
-            curY += 8 + 13;
-            for (int i = 0; i < enchantOrder.size(); i++) {
-                if (i > 0 && isHoveredArea((int) mouseX, (int) mouseY, px + 115, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(enchantOrder, i, i - 1);
-                    return true;
-                }
-                if (i < enchantOrder.size() - 1 && isHoveredArea((int) mouseX, (int) mouseY, px + 132, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(enchantOrder, i, i + 1);
-                    return true;
-                }
-                curY += 13;
-            }
-
-            // Potion Order title
-            curY += 8 + 13;
-            for (int i = 0; i < potionOrder.size(); i++) {
-                if (i > 0 && isHoveredArea((int) mouseX, (int) mouseY, px + 115, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(potionOrder, i, i - 1);
-                    return true;
-                }
-                if (i < potionOrder.size() - 1 && isHoveredArea((int) mouseX, (int) mouseY, px + 132, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(potionOrder, i, i + 1);
-                    return true;
-                }
-                curY += 13;
-            }
-
-            // Block Order title
-            curY += 8 + 13;
-            for (int i = 0; i < blockOrder.size(); i++) {
-                if (i > 0 && isHoveredArea((int) mouseX, (int) mouseY, px + 115, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(blockOrder, i, i - 1);
-                    return true;
-                }
-                if (i < blockOrder.size() - 1 && isHoveredArea((int) mouseX, (int) mouseY, px + 132, curY - 1, 14, 12)) {
-                    java.util.Collections.swap(blockOrder, i, i + 1);
-                    return true;
-                }
-                curY += 13;
-            }
-
-            // Custom Group Order sections
-            for (int gi = 0; gi < cgNames.size(); gi++) {
-                curY += 8 + 13;
-                List<String> cgOrder = customGroupOrders.get(gi);
-                for (int i = 0; i < cgOrder.size(); i++) {
-                    if (i > 0 && isHoveredArea((int) mouseX, (int) mouseY, px + 115, curY - 1, 14, 12)) {
-                        java.util.Collections.swap(cgOrder, i, i - 1);
-                        return true;
-                    }
-                    if (i < cgOrder.size() - 1 && isHoveredArea((int) mouseX, (int) mouseY, px + 132, curY - 1, 14, 12)) {
-                        java.util.Collections.swap(cgOrder, i, i + 1);
-                        return true;
-                    }
-                    curY += 13;
-                }
             }
         }
         return super.mouseClicked(click, bl);
@@ -1400,7 +1425,7 @@ public class SortingOrderConfigScreen extends Screen {
     private void selectSlot(int slot) {
         selectedSlot = slot;
         Integer currentTier = tierAssignments.get(slot);
-        numberField.setText(currentTier != null ? String.valueOf(currentTier) : "");
+        numberField.setValue(currentTier != null ? String.valueOf(currentTier) : "");
         numberField.setFocused(true);
     }
 
@@ -1416,22 +1441,22 @@ public class SortingOrderConfigScreen extends Screen {
         if (mouseX >= px - 2 && mouseX < px + panelW && mouseY >= py - 2 && mouseY < py + panelH) {
             scrollOffset -= (int)(verticalAmount * 20);
             if (scrollOffset < 0) scrollOffset = 0;
-            if (scrollOffset > MAX_SCROLL) scrollOffset = MAX_SCROLL;
+            if (scrollOffset > maxScroll) scrollOffset = maxScroll;
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
 
     /** Draw a decorated border only (no dark background) */
-    private void drawDecoratedBorder(DrawContext context, int x, int y, int width, int height) {
-        context.drawHorizontalLine(x, x + width - 1, y, 0xFF000000);
-        context.drawHorizontalLine(x, x + width - 1, y + height - 1, 0xFF000000);
-        context.drawVerticalLine(x, y, y + height - 1, 0xFF000000);
-        context.drawVerticalLine(x + width - 1, y, y + height - 1, 0xFF000000);
-        context.drawHorizontalLine(x + 1, x + width - 2, y + 1, 0xFF555555);
-        context.drawVerticalLine(x + 1, y + 1, y + height - 2, 0xFF555555);
-        context.drawHorizontalLine(x + 1, x + width - 2, y + height - 2, 0xFF2A2A2A);
-        context.drawVerticalLine(x + width - 2, y + 1, y + height - 2, 0xFF2A2A2A);
+    private void drawDecoratedBorder(GuiGraphicsExtractor context, int x, int y, int width, int height) {
+        context.horizontalLine(x, x + width - 1, y, 0xFF000000);
+        context.horizontalLine(x, x + width - 1, y + height - 1, 0xFF000000);
+        context.verticalLine(x, y, y + height - 1, 0xFF000000);
+        context.verticalLine(x + width - 1, y, y + height - 1, 0xFF000000);
+        context.horizontalLine(x + 1, x + width - 2, y + 1, 0xFF555555);
+        context.verticalLine(x + 1, y + 1, y + height - 2, 0xFF555555);
+        context.horizontalLine(x + 1, x + width - 2, y + height - 2, 0xFF2A2A2A);
+        context.verticalLine(x + width - 2, y + 1, y + height - 2, 0xFF2A2A2A);
         context.fill(x + 2, y + 2, x + 4, y + 4, 0xFF888888);
         context.fill(x + width - 4, y + 2, x + width - 2, y + 4, 0xFF888888);
         context.fill(x + 2, y + height - 4, x + 4, y + height - 2, 0xFF888888);
@@ -1439,23 +1464,23 @@ public class SortingOrderConfigScreen extends Screen {
     }
 
     /** Draw a decorated panel background (Minecraft-style) */
-    private void drawDecoratedPanel(DrawContext context, int x, int y, int width, int height) {
+    private void drawDecoratedPanel(GuiGraphicsExtractor context, int x, int y, int width, int height) {
         // Dark background
         context.fill(x, y, x + width, y + height, 0xC0101010);
         
         // Outer border (dark)
-        context.drawHorizontalLine(x, x + width - 1, y, 0xFF000000);
-        context.drawHorizontalLine(x, x + width - 1, y + height - 1, 0xFF000000);
-        context.drawVerticalLine(x, y, y + height - 1, 0xFF000000);
-        context.drawVerticalLine(x + width - 1, y, y + height - 1, 0xFF000000);
+        context.horizontalLine(x, x + width - 1, y, 0xFF000000);
+        context.horizontalLine(x, x + width - 1, y + height - 1, 0xFF000000);
+        context.verticalLine(x, y, y + height - 1, 0xFF000000);
+        context.verticalLine(x + width - 1, y, y + height - 1, 0xFF000000);
         
         // Inner highlight (light gray)
-        context.drawHorizontalLine(x + 1, x + width - 2, y + 1, 0xFF555555);
-        context.drawVerticalLine(x + 1, y + 1, y + height - 2, 0xFF555555);
+        context.horizontalLine(x + 1, x + width - 2, y + 1, 0xFF555555);
+        context.verticalLine(x + 1, y + 1, y + height - 2, 0xFF555555);
         
         // Bottom-right shadow (darker)
-        context.drawHorizontalLine(x + 1, x + width - 2, y + height - 2, 0xFF2A2A2A);
-        context.drawVerticalLine(x + width - 2, y + 1, y + height - 2, 0xFF2A2A2A);
+        context.horizontalLine(x + 1, x + width - 2, y + height - 2, 0xFF2A2A2A);
+        context.verticalLine(x + width - 2, y + 1, y + height - 2, 0xFF2A2A2A);
         
         // Corner decorations (small dots for detail)
         context.fill(x + 2, y + 2, x + 4, y + 4, 0xFF888888);
@@ -1465,7 +1490,7 @@ public class SortingOrderConfigScreen extends Screen {
     }
 
     /** Draw the guide overlay panel for Tier Order screen */
-    private void drawGuideOverlay(DrawContext context) {
+    private void drawGuideOverlay(GuiGraphicsExtractor context) {
         int gw = 310, gh = 192;
         int gx = width / 2 - gw / 2;
         int gy = height / 2 - gh / 2;
@@ -1476,39 +1501,51 @@ public class SortingOrderConfigScreen extends Screen {
 
         // Title bar
         context.fill(gx + 4, gy + 4, gx + gw - 4, gy + 20, 0xFF1A1A2E);
-        context.drawCenteredTextWithShadow(textRenderer,
-            Text.literal("\u00a7e\u00a7lTier Order Config Guide"), width / 2, gy + 8, 0xFFFFFF55);
+        context.centeredText(font,
+            Component.literal("\u00a7e\u00a7lTier Order Config Guide"), width / 2, gy + 8, 0xFFFFFF55);
 
         int lx = gx + 12, ly = gy + 26, lh = 13;
 
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7b--- Slot Tier Assignment ---"), lx, ly, 0xFF55FFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[1] \u00a7fClick a slot (only slots with rules can be tiered)"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[2] \u00a7fType a tier number (1 = highest priority, 41 = lowest)"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[3] \u00a7fPress 'Set' to apply the tier to the selected slot"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[4] \u00a7fPress 'X' to clear the tier from the selected slot"), lx, ly, 0xFFFFFFFF); ly += lh + 3;
+        context.text(font,
+            Component.literal("\u00a7b--- Slot Tier Assignment ---"), lx, ly, 0xFF55FFFF); ly += lh;
+        context.text(font,
+            Component.literal("\u00a7e[1] \u00a7fClick a slot (only slots with rules can be tiered)"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font,
+            Component.literal("\u00a7e[2] \u00a7fType a tier number (1 = highest priority, 41 = lowest)"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font,
+            Component.literal("\u00a7e[3] \u00a7fPress 'Set' to apply the tier to the selected slot"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font,
+            Component.literal("\u00a7e[4] \u00a7fPress 'X' to clear the tier from the selected slot"), lx, ly, 0xFFFFFFFF); ly += lh + 3;
 
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7b--- Right Panel (Sort Order) ---"), lx, ly, 0xFF55FFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[5] \u00a7fDrag items in the list to reorder sort priority"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[6] \u00a7fSort Priority: order of sort criteria applied"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[7] \u00a7fMaterial/Food/Enchant Order: group ordering"), lx, ly, 0xFFFFFFFF); ly += lh + 6;
+        context.text(font,
+            Component.literal("\u00a7b--- Right Panel (Sort Order) ---"), lx, ly, 0xFF55FFFF); ly += lh;
+        context.text(font,
+            Component.literal("\u00a7e[5] \u00a7fDrag items in the list to reorder sort priority"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font,
+            Component.literal("\u00a7e[6] \u00a7fSort Priority: order of sort criteria applied"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font,
+            Component.literal("\u00a7e[7] \u00a7fMaterial/Food/Enchant Order: group ordering"), lx, ly, 0xFFFFFFFF); ly += lh + 6;
 
         context.fill(gx + 12, ly, gx + gw - 12, ly + 1, 0xFF444444); ly += 6;
 
-        context.drawCenteredTextWithShadow(textRenderer,
-            Text.literal("\u00a77Click outside or press \u00a7e[?]\u00a77 to close this guide"), width / 2, ly, 0xFF888888);
+        context.centeredText(font,
+            Component.literal("\u00a77Click outside or press \u00a7e[?]\u00a77 to close this guide"), width / 2, ly, 0xFF888888);
     }
 
     @Override
-    public void close() {
-        MinecraftClient.getInstance().setScreen(parent);
+    public void onClose() {
+        saveSortPreferences();
+        Minecraft.getInstance().gui.setScreen(parent);
     }
+
+    /** Safely create ItemStack — returns EMPTY if components aren't bound yet (26.1 NPE workaround). */
+    private static net.minecraft.world.item.ItemStack safeIcon(net.minecraft.world.item.Item item) {
+        if (item == null) return net.minecraft.world.item.ItemStack.EMPTY;
+        try {
+            return new net.minecraft.world.item.ItemStack(net.minecraft.core.Holder.direct(item));
+        } catch (Throwable t) {
+            return net.minecraft.world.item.ItemStack.EMPTY;
+        }
+    }
+
 }

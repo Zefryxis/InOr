@@ -1,11 +1,11 @@
 package com.example.inventoryorganizer.mixin;
 
 import com.example.inventoryorganizer.config.VisualInventoryConfigScreen;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.screen.option.OptionsScreen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.text.Text;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.options.OptionsScreen;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.network.chat.Component;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -15,19 +15,19 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(OptionsScreen.class)
 public abstract class OptionsScreenMixin extends Screen {
 
-    @Unique private ButtonWidget opt$inorButton = null;
+    @Unique private Button opt$inorButton = null;
 
-    protected OptionsScreenMixin(Text title) {
+    protected OptionsScreenMixin(Component title) {
         super(title);
     }
 
     @Inject(method = "init", at = @At("TAIL"))
     private void addInorSettingsButton(CallbackInfo ci) {
-        // Find the bottom-most ButtonWidget (Done) — language-independent
-        ButtonWidget doneBtn = null;
+        // Find the bottom-most Button (Done) — language-independent
+        Button doneBtn = null;
         int maxBtnY = -1;
         for (var element : this.children()) {
-            if (element instanceof ButtonWidget btn && btn != opt$inorButton) {
+            if (element instanceof Button btn && btn != opt$inorButton) {
                 if (btn.getY() > maxBtnY) {
                     maxBtnY = btn.getY();
                     doneBtn = btn;
@@ -56,12 +56,12 @@ public abstract class OptionsScreenMixin extends Screen {
             btnY = this.height - 50;
         }
 
-        opt$inorButton = ButtonWidget.builder(
-                Text.translatable("inventory-organizer.button.inor_settings"),
-                button -> MinecraftClient.getInstance().setScreen(
-                        new VisualInventoryConfigScreen(MinecraftClient.getInstance().currentScreen))
-        ).dimensions(btnX, btnY, btnW, 20).build();
-        this.addDrawableChild(opt$inorButton);
+        opt$inorButton = Button.builder(
+                Component.translatable("inventory-organizer.button.inor_settings"),
+                button -> Minecraft.getInstance().gui.setScreen(
+                        new VisualInventoryConfigScreen(Minecraft.getInstance().gui.screen()))
+        ).bounds(btnX, btnY, btnW, 20).build();
+        this.addRenderableWidget(opt$inorButton);
     }
 
 }

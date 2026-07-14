@@ -1,36 +1,26 @@
 {
   "schemaVersion": 1,
   "id": "inventory-organizer",
-  "version": "1.0.0",
+  "version": "1.6.0",
   "name": "Inventory Organizer",
   "description": "A Minecraft mod that organizes your inventory with a button below the crafting table",
-  "authors": [
-    "Zefryxis"
-  ],
+  "authors": ["Zefryxis"],
   "contact": {
     "homepage": "https://github.com/Zefryxis/InOr",
     "sources": "https://github.com/Zefryxis/InOr"
   },
   "license": "MIT",
   "icon": "assets/inventory-organizer/icon.png",
-  "environment": "client",
+  "environment": "*",
   "entrypoints": {
-    "client": [
-      "com.example.inventoryorganizer.InventoryOrganizerClient"
-    ],
-    "main": [
-      "com.example.inventoryorganizer.InventoryOrganizer"
-    ],
-    "modmenu": [
-      "com.example.inventoryorganizer.config.ModMenuIntegration"
-    ]
+    "client": ["com.example.inventoryorganizer.InventoryOrganizerClient"],
+    "main": ["com.example.inventoryorganizer.InventoryOrganizer"],
+    "modmenu": ["com.example.inventoryorganizer.config.ModMenuIntegration"]
   },
-  "mixins": [
-    "inventory-organizer.mixins.json"
-  ],
+  "mixins": ["inventory-organizer.mixins.json", "inventory-organizer.crafting.mixins.json"],
   "depends": {
-    "fabricloader": ">=0.16.5",
+    "fabricloader": ">=0.19",
     "fabric-api": "*",
-    "minecraft": "~1.21.10"
+    "minecraft": "~26.2"
   }
 }

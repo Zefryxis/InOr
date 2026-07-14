@@ -1,18 +1,18 @@
 package com.example.inventoryorganizer.config;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.client.input.KeyInput;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.Registries;
-import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -28,16 +28,24 @@ public class CustomGroupEditorScreen extends Screen {
     private final Screen parent;
     private final OrganizerConfig config;
     private final String groupName;
+    private final boolean isBuiltin;
 
-    // Each cell: null/"" = empty, else = full item ID (e.g. "minecraft:diamond_sword")
+    // Full group contents (may exceed one grid page). The grid shows a 90-item window into this.
+    private final List<String> allItems = new ArrayList<>();
+    private int page = 0;
+
+    // Each cell: null/"" = empty, else = full item ID (e.g. "minecraft:diamond_sword").
+    // Represents the CURRENT page's 90 cells; committed back into allItems on page change / save.
     private final String[] cells = new String[GRID_SIZE];
 
     private int gridX, gridY, SLOT_W, SLOT_H;
     private int paletteX, paletteY, paletteW, paletteH;
     private int paletteScroll = 0;
     private int maxPaletteScroll = 0;
+    private boolean draggingScrollbar = false;
+    private static final int SCROLLBAR_WIDTH = 6;
 
-    private TextFieldWidget searchField;
+    private EditBox searchField;
     private String lastSearch = "";
     private String selectedItemId = null;
     private boolean showHelp = false;
@@ -56,22 +64,70 @@ public class CustomGroupEditorScreen extends Screen {
     }
 
     public CustomGroupEditorScreen(Screen parent, String groupName) {
-        super(Text.literal("Group Editor: " + groupName));
+        this(parent, groupName, false);
+    }
+
+    public CustomGroupEditorScreen(Screen parent, String groupName, boolean isBuiltin) {
+        super(Component.literal((isBuiltin ? "Built-in Group: " : "Group Editor: ") + groupName));
         this.parent = parent;
         this.config = OrganizerConfig.get();
         this.groupName = groupName;
+        this.isBuiltin = isBuiltin;
 
-        List<String> existing = config.getCustomGroup(groupName);
-        for (int i = 0; i < GRID_SIZE && i < existing.size(); i++) {
-            cells[i] = existing.get(i);
+        // Load full contents into allItems.
+        List<String> existing;
+        if (isBuiltin) {
+            List<String> override = config.getBuiltinGroupItems(groupName);
+            existing = (override != null) ? override
+                    : com.example.inventoryorganizer.InventorySorter.getDefaultItemsForGroup(groupName);
+        } else {
+            existing = config.getCustomGroup(groupName);
         }
+        allItems.addAll(existing);
+        loadPage();
         buildAllEntries();
+    }
+
+    /** Total number of grid pages (at least 1). */
+    private int pageCount() {
+        int needed = allItems.size() + 1; // +1 so there's always a trailing empty cell to add into
+        return Math.max(1, (needed + GRID_SIZE - 1) / GRID_SIZE);
+    }
+
+    /** Copy the page-th 90-item window of allItems into cells[]. */
+    private void loadPage() {
+        int base = page * GRID_SIZE;
+        for (int i = 0; i < GRID_SIZE; i++) {
+            int gi = base + i;
+            cells[i] = (gi < allItems.size()) ? allItems.get(gi) : null;
+        }
+    }
+
+    /** Write the current cells[] back into the page-th window of allItems. */
+    private void commitPage() {
+        int base = page * GRID_SIZE;
+        // Ensure allItems is large enough to hold this page.
+        while (allItems.size() < base + GRID_SIZE) allItems.add(null);
+        for (int i = 0; i < GRID_SIZE; i++) {
+            allItems.set(base + i, cells[i]);
+        }
+        // Trim trailing nulls.
+        for (int i = allItems.size() - 1; i >= 0; i--) {
+            if (allItems.get(i) == null || allItems.get(i).isEmpty()) allItems.remove(i);
+            else break;
+        }
+    }
+
+    private void gotoPage(int newPage) {
+        commitPage();
+        page = Math.max(0, Math.min(newPage, pageCount() - 1));
+        loadPage();
     }
 
     private void buildAllEntries() {
         allEntries.clear();
         try {
-            for (Identifier id : Registries.ITEM.getIds()) {
+            for (Identifier id : BuiltInRegistries.ITEM.keySet()) {
                 String itemId = id.toString();
                 if (itemId.equals("minecraft:air")) continue;
                 String name = formatIdAsName(id.getPath());
@@ -115,12 +171,12 @@ public class CustomGroupEditorScreen extends Screen {
         paletteY = gridY + 4;
         paletteH = height - paletteY - 44;
 
-        searchField = new TextFieldWidget(textRenderer, paletteX, paletteY - 16, paletteW, 14, Text.literal("Search..."));
+        searchField = new EditBox(font, paletteX, paletteY - 16, paletteW, 14, Component.literal("Search..."));
         searchField.setMaxLength(50);
-        searchField.setPlaceholder(Text.literal("Search items..."));
-        searchField.setEditableColor(0xFFFFFFFF);
-        searchField.setChangedListener(t -> applyFilter());
-        addDrawableChild(searchField);
+        searchField.setHint(Component.literal("Search items..."));
+        searchField.setTextColor(0xFFFFFFFF);
+        searchField.setResponder(t -> applyFilter());
+        addRenderableWidget(searchField);
 
         lastSearch = null; // force rebuild on init
         applyFilter();
@@ -131,61 +187,104 @@ public class CustomGroupEditorScreen extends Screen {
         int totalW = btnW * 5 + gap * 4;
         int startX = width / 2 - totalW / 2;
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Save"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Save"), btn -> {
             saveGroup();
-            // Auto-export: also write the text file so the user always has it on disk.
-            try {
-                Path target = GroupTextFile.fileForGroup(groupName);
-                exportToFile(target);
-            } catch (IOException e) {
-                System.err.println("[InventoryOrganizer] Save auto-export failed: " + e);
-                e.printStackTrace();
+            if (!isBuiltin) {
+                try {
+                    Path target = GroupTextFile.fileForGroup(groupName);
+                    exportToFile(target);
+                } catch (IOException e) {
+                    System.err.println("[InventoryOrganizer] Save auto-export failed: " + e);
+                    e.printStackTrace();
+                }
             }
-            MinecraftClient.getInstance().setScreen(parent);
-        }).dimensions(startX, btnY, btnW, 20).build());
+            Minecraft.getInstance().gui.setScreen(parent);
+        }).bounds(startX, btnY, btnW, 20).build());
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Folder"), btn -> {
-            GroupTextFile.openGroupsFolder();
-            try {
-                showStatus("\u00a7bFolder: \u00a7f" + GroupTextFile.getGroupsFolder().toAbsolutePath());
-            } catch (IOException e) {
-                showStatus("\u00a7cCannot open folder: " + e.getMessage());
-            }
-        }).dimensions(startX + (btnW + gap), btnY, btnW, 20).build());
+        if (isBuiltin) {
+            // Built-in groups: replace Folder/Export with a "Reset" button (revert to default heuristic).
+            addRenderableWidget(StyledButton.styledBuilder(Component.literal("Reset"), btn -> {
+                config.resetBuiltinGroup(groupName);
+                config.save();
+                allItems.clear();
+                allItems.addAll(com.example.inventoryorganizer.InventorySorter.getDefaultItemsForGroup(groupName));
+                page = 0;
+                loadPage();
+            }).bounds(startX + (btnW + gap), btnY, btnW, 20).build());
+        } else {
+            addRenderableWidget(StyledButton.styledBuilder(Component.literal("Folder"), btn -> {
+                GroupTextFile.openGroupsFolder();
+                try {
+                    showStatus("\u00a7bFolder: \u00a7f" + GroupTextFile.getGroupsFolder().toAbsolutePath());
+                } catch (IOException e) {
+                    showStatus("\u00a7cCannot open folder: " + e.getMessage());
+                }
+            }).bounds(startX + (btnW + gap), btnY, btnW, 20).build());
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Export"), btn -> {
-            try {
-                Path target = GroupTextFile.fileForGroup(groupName);
-                exportToFile(target);
-            } catch (IOException e) {
-                showStatus("\u00a7cExport failed: " + e.getMessage());
-            }
-        }).dimensions(startX + (btnW + gap) * 2, btnY, btnW, 20).build());
+            addRenderableWidget(StyledButton.styledBuilder(Component.literal("Export"), btn -> {
+                try {
+                    Path target = GroupTextFile.fileForGroup(groupName);
+                    exportToFile(target);
+                } catch (IOException e) {
+                    showStatus("\u00a7cExport failed: " + e.getMessage());
+                }
+            }).bounds(startX + (btnW + gap) * 2, btnY, btnW, 20).build());
+        }
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Clear All"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Clear All"), btn -> {
             for (int i = 0; i < GRID_SIZE; i++) cells[i] = null;
-        }).dimensions(startX + (btnW + gap) * 3, btnY, btnW, 20).build());
+            allItems.clear();
+            page = 0;
+            loadPage();
+        }).bounds(startX + (btnW + gap) * 3, btnY, btnW, 20).build());
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Back"), btn -> {
-            MinecraftClient.getInstance().setScreen(parent);
-        }).dimensions(startX + (btnW + gap) * 4, btnY, btnW, 20).build());
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Back"), btn -> {
+            Minecraft.getInstance().gui.setScreen(parent);
+        }).bounds(startX + (btnW + gap) * 4, btnY, btnW, 20).build());
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("?"), btn -> {
+        // "Set Icon": use the currently selected palette item as this group's display icon (the small
+        // icon shown next to the group in the slot-config picker). Stored as preference cg_icon_<name>.
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Set Icon ⭐"), btn -> {
+            if (selectedItemId != null) {
+                config.setPreference("cg_icon_" + groupName, new String[]{ selectedItemId });
+                config.save();
+                showStatus("§aGroup icon set to §f" + selectedItemId);
+            } else {
+                showStatus("§ePick an item in the palette first, then click Set Icon.");
+            }
+        }).bounds(startX, btnY - 24, btnW, 20).build());
+
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("?"), btn -> {
             showHelp = !showHelp;
-        }).dimensions(width - 24, 4, 20, 18).build());
+        }).bounds(width - 24, 4, 20, 18).build());
+
+        // Page navigation (\u25c4 \u25ba) \u2014 placed just above the bottom button row, centered.
+        int pageY = btnY - 22;
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("\u25c4"), btn -> {
+            gotoPage(page - 1);
+        }).bounds(width / 2 - 60, pageY, 20, 18).build());
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("\u25ba"), btn -> {
+            gotoPage(page + 1);
+        }).bounds(width / 2 + 40, pageY, 20, 18).build());
     }
 
     private void saveGroup() {
+        commitPage();
         List<String> items = new ArrayList<>();
-        for (String cell : cells) {
+        for (String cell : allItems) {
             if (cell != null && !cell.isEmpty()) items.add(cell);
         }
-        config.setCustomGroup(groupName, items);
+        if (isBuiltin) {
+            config.setBuiltinGroupItems(groupName, items);
+        } else {
+            config.setCustomGroup(groupName, items);
+        }
         config.save();
     }
 
-    /** Drag-and-drop: dropping any text file onto this screen imports it. */
-    @Override
+    /** Drag-and-drop: dropping any text file onto this screen imports it.
+     *  Disabled in 26.1 port — onFilesDropped no longer exists in the Screen class.
+     *  Use the Folder button + manual file copy instead. */
     public void onFilesDropped(List<Path> paths) {
         if (paths == null || paths.isEmpty()) return;
         importFromFile(paths.get(0));
@@ -234,7 +333,7 @@ public class CustomGroupEditorScreen extends Screen {
     }
 
     private void applyFilter() {
-        String search = searchField != null ? searchField.getText().trim().toLowerCase() : "";
+        String search = searchField != null ? searchField.getValue().trim().toLowerCase() : "";
         if (search.equals(lastSearch)) return;
         lastSearch = search;
         paletteScroll = 0;
@@ -260,34 +359,40 @@ public class CustomGroupEditorScreen extends Screen {
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        super.render(context, mouseX, mouseY, delta);
+    public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        super.extractRenderState(context, mouseX, mouseY, delta);
 
-        context.drawCenteredTextWithShadow(textRenderer,
-            Text.literal("\u00a7eGroup Editor: \u00a7f" + groupName), width / 2, 4, 0xFFFFFFFF);
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("Select item from list, then click a cell to add it. Right-click to clear."),
+        context.centeredText(font,
+            Component.literal((isBuiltin ? "\u00a7eBuilt-in Group: \u00a7f" : "\u00a7eGroup Editor: \u00a7f") + groupName), width / 2, 4, 0xFFFFFFFF);
+        context.text(font,
+            Component.literal("Select item from list, then click a cell to add it. Right-click to clear."),
             width / 2 - 160, 16, 0xFFAAAAAA);
 
         drawGrid(context, mouseX, mouseY);
         drawPaletteExtras(context, mouseX, mouseY);
 
+        // Page indicator between the \u25c4 \u25ba buttons.
+        int pageY = (height - 28) - 22;
+        context.centeredText(font,
+            Component.literal("\u00a7fPage " + (page + 1) + "/" + pageCount()),
+            width / 2, pageY + 5, 0xFFFFFFFF);
+
         // Re-render searchField on top of the palette panel fill (fill covers widget drawn by super.render)
-        if (searchField != null) searchField.render(context, mouseX, mouseY, delta);
+        if (searchField != null) searchField.extractRenderState(context, mouseX, mouseY, delta);
 
         if (selectedItemId != null) {
-            context.drawTextWithShadow(textRenderer, Text.literal(selectedItemId),
+            context.text(font, Component.literal(selectedItemId),
                 mouseX + 12, mouseY - 4, 0xFF55FF55);
         }
 
         // Transient import / export status banner
         if (statusMessage != null) {
             if (System.currentTimeMillis() < statusUntilMs) {
-                int tw = textRenderer.getWidth(statusMessage);
+                int tw = font.width(statusMessage);
                 int sx = width / 2 - tw / 2 - 6;
-                int sy = height - 52;
+                int sy = height - 76; // above the Set Icon / button rows (was height-52, which overlapped them)
                 context.fill(sx, sy, sx + tw + 12, sy + 14, 0xCC000000);
-                context.drawCenteredTextWithShadow(textRenderer, Text.literal(statusMessage),
+                context.centeredText(font, Component.literal(statusMessage),
                         width / 2, sy + 3, 0xFFFFFFFF);
             } else {
                 statusMessage = null;
@@ -297,8 +402,8 @@ public class CustomGroupEditorScreen extends Screen {
         if (showHelp) drawGuideOverlay(context);
     }
 
-    private void drawGuideOverlay(DrawContext context) {
-        int gw = 380, gh = 223;
+    private void drawGuideOverlay(GuiGraphicsExtractor context) {
+        int gw = 460, gh = 320;
         int gx = width / 2 - gw / 2;
         int gy = height / 2 - gh / 2;
 
@@ -309,38 +414,65 @@ public class CustomGroupEditorScreen extends Screen {
         context.fill(gx, gy, gx + 2, gy + gh, 0xFF4466AA);
         context.fill(gx + gw - 2, gy, gx + gw, gy + gh, 0xFF4466AA);
         context.fill(gx + 4, gy + 4, gx + gw - 4, gy + 20, 0xFF111133);
-        context.drawCenteredTextWithShadow(textRenderer,
-            Text.literal("\u00a7e\u00a7lGroup Editor Guide"), width / 2, gy + 8, 0xFFFFFF55);
+        context.centeredText(font,
+            Component.literal("\u00a7e\u00a7lGroup Editor Guide"), width / 2, gy + 8, 0xFFFFFF55);
 
-        int lx = gx + 12, ly = gy + 26, lh = 13;
-        context.drawTextWithShadow(textRenderer, Text.literal("\u00a7b--- Custom Groups ---"), lx, ly, 0xFF55FFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer, Text.literal("\u00a7fGroups are item collections usable as slot rules."), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer, Text.literal("\u00a77Use as rule: 'g:<name>' in the inventory config."), lx, ly, 0xFFAAAAAA); ly += lh + 4;
-        context.drawTextWithShadow(textRenderer, Text.literal("\u00a7b--- How to use ---"), lx, ly, 0xFF55FFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer, Text.literal("\u00a7e[1] \u00a7fSearch for an item in the right panel"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer, Text.literal("\u00a7e[2] \u00a7fLeft-click a list entry to select it (blue highlight)"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer, Text.literal("\u00a7e[3] \u00a7fLeft-click a cell to place the selected item there"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer, Text.literal("\u00a7e[4] \u00a7fRight-click a cell to remove the item from it"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer, Text.literal("\u00a7e[5] \u00a7f'Clear All' removes all items from the grid at once"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer, Text.literal("\u00a7e[6] \u00a7f'Save' stores the group and returns to the list"), lx, ly, 0xFFFFFFFF); ly += lh + 6;
+        int lx = gx + 12, ly = gy + 26, lh = 12;
 
-        context.fill(gx + 12, ly, gx + gw - 12, ly + 1, 0xFF444444); ly += 6;
-        context.drawCenteredTextWithShadow(textRenderer,
-            Text.literal("\u00a77Click outside or press \u00a7e[?]\u00a77 to close"),
+        context.text(font, Component.literal("\u00a7b--- Custom Groups ---"), lx, ly, 0xFF55FFFF); ly += lh;
+        context.text(font, Component.literal("\u00a7fGroups are item collections usable as slot rules."), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.literal("\u00a77Use as rule: 'g:<name>' in the inventory config."), lx, ly, 0xFFAAAAAA); ly += lh + 3;
+
+        context.text(font, Component.literal("\u00a7b--- How to use ---"), lx, ly, 0xFF55FFFF); ly += lh;
+        context.text(font, Component.literal("\u00a7e[1] \u00a7fSearch for an item in the right panel"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.literal("\u00a7e[2] \u00a7fLeft-click a list entry to select it (blue highlight)"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.literal("\u00a7e[3] \u00a7fLeft-click a cell to place the selected item there"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.literal("\u00a7e[4] \u00a7fRight-click a cell to remove the item from it"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.literal("\u00a7e[5] \u00a7f'Clear All' removes all items from the grid at once"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.literal("\u00a7e[6] \u00a7f'Save' stores the group and returns to the list"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.literal("\u00a7e[7] \u00a7fScroll wheel \u00a77or\u00a7f drag the right scrollbar to navigate the list"), lx, ly, 0xFFFFFFFF); ly += lh + 3;
+
+        context.text(font, Component.literal("\u00a7b--- File paths ---"), lx, ly, 0xFF55FFFF); ly += lh;
+        String savedFolder;
+        String importFolder;
+        try {
+            savedFolder = GroupTextFile.getGroupsFolder().toAbsolutePath().toString();
+            importFolder = GroupTextFile.getImportFolder().toAbsolutePath().toString();
+        } catch (Exception e) {
+            savedFolder = "<game dir>/inventory-organizer-groups";
+            importFolder = "<game dir>/inventory-organizer-groups/import";
+        }
+        context.text(font, Component.literal("\u00a77Saved groups: \u00a7f" + truncatePath(savedFolder, 70)), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.literal("\u00a77Drop .txt files to import: \u00a7f" + truncatePath(importFolder, 60)), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.literal("\u00a77Use 'Folder' button to open the folder in your file manager."), lx, ly, 0xFFAAAAAA); ly += lh + 3;
+
+        context.text(font, Component.literal("\u00a7b--- 26.1 notes ---"), lx, ly, 0xFF55FFFF); ly += lh;
+        context.text(font, Component.literal("\u00a77Item icons use 2D PNG textures (3D models like shield/crossbow"), lx, ly, 0xFFAAAAAA); ly += lh;
+        context.text(font, Component.literal("\u00a77show flat fallbacks). Tooltips disabled in this version."), lx, ly, 0xFFAAAAAA); ly += lh + 4;
+
+        context.fill(gx + 12, ly, gx + gw - 12, ly + 1, 0xFF444444); ly += 5;
+        context.centeredText(font,
+            Component.literal("\u00a77Click outside or press \u00a7e[?]\u00a77 to close"),
             width / 2, ly, 0xFF888888);
     }
 
-    private void drawGrid(DrawContext context, int mouseX, int mouseY) {
+    private static String truncatePath(String s, int max) {
+        if (s == null) return "";
+        if (s.length() <= max) return s;
+        return "..." + s.substring(s.length() - (max - 3));
+    }
+
+    private void drawGrid(GuiGraphicsExtractor context, int mouseX, int mouseY) {
         int panelLeft = gridX - 8;
         int panelTop = gridY - 16;
         int panelW2 = GRID_COLS * SLOT_W + 16;
         int panelH2 = GRID_ROWS * SLOT_H + 24;
         context.fill(panelLeft, panelTop, panelLeft + panelW2, panelTop + panelH2, 0xFF1A1A1A);
-        context.drawHorizontalLine(panelLeft, panelLeft + panelW2, panelTop, 0xFF666666);
-        context.drawHorizontalLine(panelLeft, panelLeft + panelW2, panelTop + panelH2, 0xFF666666);
-        context.drawVerticalLine(panelLeft, panelTop, panelTop + panelH2, 0xFF666666);
-        context.drawVerticalLine(panelLeft + panelW2, panelTop, panelTop + panelH2, 0xFF666666);
-        context.drawTextWithShadow(textRenderer, Text.literal("Items in Group"), panelLeft + 2, panelTop - 10, 0xFFFFAA00);
+        context.horizontalLine(panelLeft, panelLeft + panelW2, panelTop, 0xFF666666);
+        context.horizontalLine(panelLeft, panelLeft + panelW2, panelTop + panelH2, 0xFF666666);
+        context.verticalLine(panelLeft, panelTop, panelTop + panelH2, 0xFF666666);
+        context.verticalLine(panelLeft + panelW2, panelTop, panelTop + panelH2, 0xFF666666);
+        context.text(font, Component.literal("Items in Group"), panelLeft + 2, panelTop - 10, 0xFFFFAA00);
 
         for (int row = 0; row < GRID_ROWS; row++) {
             for (int col = 0; col < GRID_COLS; col++) {
@@ -352,7 +484,7 @@ public class CustomGroupEditorScreen extends Screen {
         }
     }
 
-    private void drawCell(DrawContext context, int x, int y, int idx, int mouseX, int mouseY) {
+    private void drawCell(GuiGraphicsExtractor context, int x, int y, int idx, int mouseX, int mouseY) {
         String itemId = cells[idx];
         boolean hasItem = itemId != null && !itemId.isEmpty();
         boolean hovered = mouseX >= x && mouseX < x + SLOT_W && mouseY >= y && mouseY < y + SLOT_H;
@@ -369,37 +501,37 @@ public class CustomGroupEditorScreen extends Screen {
         }
         if (hovered) {
             context.fill(x + 3, y + 3, x + SLOT_W - 3, y + SLOT_H - 3, 0x55FFFF00);
-            context.drawHorizontalLine(x + 2, x + SLOT_W - 3, y + 2, 0xFFFFFF00);
-            context.drawHorizontalLine(x + 2, x + SLOT_W - 3, y + SLOT_H - 3, 0xFFFFFF00);
-            context.drawVerticalLine(x + 2, y + 2, y + SLOT_H - 3, 0xFFFFFF00);
-            context.drawVerticalLine(x + SLOT_W - 3, y + 2, y + SLOT_H - 3, 0xFFFFFF00);
+            context.horizontalLine(x + 2, x + SLOT_W - 3, y + 2, 0xFFFFFF00);
+            context.horizontalLine(x + 2, x + SLOT_W - 3, y + SLOT_H - 3, 0xFFFFFF00);
+            context.verticalLine(x + 2, y + 2, y + SLOT_H - 3, 0xFFFFFF00);
+            context.verticalLine(x + SLOT_W - 3, y + 2, y + SLOT_H - 3, 0xFFFFFF00);
         }
 
         if (hasItem) {
             try {
-                Item item = Registries.ITEM.get(Identifier.of(itemId));
+                Item item = BuiltInRegistries.ITEM.getValue(Identifier.parse(itemId));
                 if (item != null && item != Items.AIR) {
-                    context.drawItem(new ItemStack(item), x + (SLOT_W - 16) / 2, y + (SLOT_H - 16) / 2);
+                    VisualInventoryConfigScreen.drawItemIcon(context, new ItemStack(net.minecraft.core.Holder.direct(item)), x + (SLOT_W - 16) / 2, y + (SLOT_H - 16) / 2);
                 }
             } catch (Exception ignored) {}
 
             String label = itemId.contains(":") ? itemId.substring(itemId.indexOf(':') + 1).replace('_', ' ') : itemId;
             int maxW = SLOT_W - 4;
-            while (label.length() > 1 && textRenderer.getWidth(label) > maxW)
+            while (label.length() > 1 && font.width(label) > maxW)
                 label = label.substring(0, label.length() - 1);
-            context.drawTextWithShadow(textRenderer, Text.literal(label),
-                x + (SLOT_W - textRenderer.getWidth(label)) / 2, y + 27, 0xFF55CC55);
+            context.text(font, Component.literal(label),
+                x + (SLOT_W - font.width(label)) / 2, y + 27, 0xFF55CC55);
         }
     }
 
-    private void drawPaletteExtras(DrawContext context, int mouseX, int mouseY) {
+    private void drawPaletteExtras(GuiGraphicsExtractor context, int mouseX, int mouseY) {
         // Panel background + border
         context.fill(paletteX - 8, paletteY - 24, paletteX + paletteW + 8, paletteY + paletteH + 8, 0xFF1A1A1A);
-        context.drawHorizontalLine(paletteX - 8, paletteX + paletteW + 8, paletteY - 24, 0xFF666666);
-        context.drawHorizontalLine(paletteX - 8, paletteX + paletteW + 8, paletteY + paletteH + 8, 0xFF666666);
-        context.drawVerticalLine(paletteX - 8, paletteY - 24, paletteY + paletteH + 8, 0xFF666666);
-        context.drawVerticalLine(paletteX + paletteW + 8, paletteY - 24, paletteY + paletteH + 8, 0xFF666666);
-        context.drawTextWithShadow(textRenderer, Text.literal("Item Palette"), paletteX, paletteY - 22, 0xFFFFAA00);
+        context.horizontalLine(paletteX - 8, paletteX + paletteW + 8, paletteY - 24, 0xFF666666);
+        context.horizontalLine(paletteX - 8, paletteX + paletteW + 8, paletteY + paletteH + 8, 0xFF666666);
+        context.verticalLine(paletteX - 8, paletteY - 24, paletteY + paletteH + 8, 0xFF666666);
+        context.verticalLine(paletteX + paletteW + 8, paletteY - 24, paletteY + paletteH + 8, 0xFF666666);
+        context.text(font, Component.literal("Item Palette"), paletteX, paletteY - 22, 0xFFFFAA00);
 
         // Scissor to palette bounds
         context.enableScissor(paletteX, paletteY, paletteX + paletteW, paletteY + paletteH);
@@ -422,30 +554,59 @@ public class CustomGroupEditorScreen extends Screen {
 
             // Item icon
             try {
-                Item item = Registries.ITEM.get(Identifier.of(entry.itemId));
+                Item item = BuiltInRegistries.ITEM.getValue(Identifier.parse(entry.itemId));
                 if (item != null && item != Items.AIR) {
-                    context.drawItem(new ItemStack(item), paletteX + 2, py + 3);
+                    VisualInventoryConfigScreen.drawItemIcon(context, new ItemStack(net.minecraft.core.Holder.direct(item)), paletteX + 2, py + 3);
                 }
             } catch (Exception ignored) {}
 
             // Item label
             String shortLabel = entry.label.length() > 20 ? entry.label.substring(0, 20) + "." : entry.label;
             int textColor = selected ? 0xFFFFFFFF : hovered ? 0xFFFFFFFF : 0xFFCCCCCC;
-            context.drawTextWithShadow(textRenderer, Text.literal(shortLabel), paletteX + 22, py + 7, textColor);
+            context.text(font, Component.literal(shortLabel), paletteX + 22, py + 7, textColor);
         }
 
         context.disableScissor();
 
-        // Scrollbar
+        // Scrollbar (draggable)
         if (maxPaletteScroll > 0) {
-            int scrollBarH = Math.max(20, paletteH * paletteH / (paletteH + maxPaletteScroll * 22));
-            int scrollBarY = paletteY + (int)((float)paletteScroll / maxPaletteScroll * (paletteH - scrollBarH));
-            context.fill(paletteX + paletteW - 4, scrollBarY, paletteX + paletteW, scrollBarY + scrollBarH, 0xFF888888);
+            int rowH2 = 22;
+            int visibleRows2 = paletteH / rowH2;
+            int totalRows = filteredEntries.size();
+            int sbX = paletteX + paletteW - SCROLLBAR_WIDTH + 7;
+            int sbH = Math.max(20, paletteH * visibleRows2 / Math.max(1, totalRows));
+            int sbY = paletteY + (int)((float)paletteScroll / maxPaletteScroll * (paletteH - sbH));
+            context.fill(sbX, paletteY, sbX + SCROLLBAR_WIDTH, paletteY + paletteH, 0xFF1A1A1A);
+            boolean hov = mouseX >= sbX && mouseX < sbX + SCROLLBAR_WIDTH && mouseY >= sbY && mouseY < sbY + sbH;
+            int color = (draggingScrollbar || hov) ? 0xFFCCCCCC : 0xFF888888;
+            context.fill(sbX, sbY, sbX + SCROLLBAR_WIDTH, sbY + sbH, color);
         }
     }
 
+    private int[] getScrollbarRect() {
+        if (maxPaletteScroll <= 0) return null;
+        int rowH = 22;
+        int visibleRows = paletteH / rowH;
+        int totalRows = filteredEntries.size();
+        int sbH = Math.max(20, paletteH * visibleRows / Math.max(1, totalRows));
+        int sbY = paletteY + (int)((float)paletteScroll / maxPaletteScroll * (paletteH - sbH));
+        int sbX = paletteX + paletteW - SCROLLBAR_WIDTH + 7;
+        return new int[]{sbX, paletteY, paletteY + paletteH, sbY, sbH};
+    }
+
+    private void scrollbarDragTo(double mouseY) {
+        int[] r = getScrollbarRect();
+        if (r == null) return;
+        int trackTop = r[1], trackBottom = r[2], handleH = r[4];
+        int trackHeight = trackBottom - trackTop;
+        if (trackHeight <= handleH) return;
+        double rel = (mouseY - trackTop - handleH / 2.0) / (trackHeight - handleH);
+        rel = Math.max(0.0, Math.min(1.0, rel));
+        paletteScroll = (int)Math.round(rel * maxPaletteScroll);
+    }
+
     @Override
-    public boolean mouseClicked(Click click, boolean bl) {
+    public boolean mouseClicked(MouseButtonEvent click, boolean bl) {
         if (showHelp) {
             int gw = 380, gh = 223;
             int gx = width / 2 - gw / 2;
@@ -457,6 +618,19 @@ public class CustomGroupEditorScreen extends Screen {
         }
         double mx = click.x(), my = click.y();
         int btn = click.button();
+
+        // Scrollbar drag start
+        if (btn == 0) {
+            int[] r = getScrollbarRect();
+            if (r != null) {
+                int sbX = r[0], trackTop = r[1], trackBottom = r[2], handleY = r[3], handleH = r[4];
+                if (mx >= sbX && mx < sbX + SCROLLBAR_WIDTH && my >= trackTop && my < trackBottom) {
+                    draggingScrollbar = true;
+                    if (my < handleY || my >= handleY + handleH) scrollbarDragTo(my);
+                    return true;
+                }
+            }
+        }
 
         // Palette click
         if (btn == 0 && mx >= paletteX && mx < paletteX + paletteW
@@ -491,6 +665,24 @@ public class CustomGroupEditorScreen extends Screen {
     }
 
     @Override
+    public boolean mouseDragged(MouseButtonEvent click, double deltaX, double deltaY) {
+        if (click.button() == 0 && draggingScrollbar) {
+            scrollbarDragTo(click.y());
+            return true;
+        }
+        return super.mouseDragged(click, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent click) {
+        if (click.button() == 0 && draggingScrollbar) {
+            draggingScrollbar = false;
+            return true;
+        }
+        return super.mouseReleased(click);
+    }
+
+    @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
         if (mouseX >= paletteX - 8 && mouseX <= paletteX + paletteW + 8) {
             paletteScroll = Math.max(0, Math.min(maxPaletteScroll, paletteScroll - (int) verticalAmount));
@@ -501,12 +693,12 @@ public class CustomGroupEditorScreen extends Screen {
     }
 
     @Override
-    public boolean keyPressed(KeyInput keyInput) {
+    public boolean keyPressed(KeyEvent keyEvent) {
         if (searchField != null && searchField.isFocused()) {
-            boolean handled = searchField.keyPressed(keyInput);
+            boolean handled = searchField.keyPressed(keyEvent);
             applyFilter();
             return handled;
         }
-        return super.keyPressed(keyInput);
+        return super.keyPressed(keyEvent);
     }
 }
