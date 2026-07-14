@@ -1,0 +1,21 @@
+{
+  "required": true,
+  "package": "com.example.inventoryorganizer.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "PlaceRecipeMixin",
+    "PlayerAttackTickerAccessor",
+    "PlayerItemSwitchMixin"
+  ],
+  "client": [
+    "InventoryScreenMixin",
+    "OptionsScreenMixin",
+    "CreativeInventoryScreenMixin",
+    "ContainerScreenAccessor",
+    "ContainerScrollMixin",
+    "RecipeBookCraftableMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
