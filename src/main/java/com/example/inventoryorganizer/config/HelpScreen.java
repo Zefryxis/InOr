@@ -83,6 +83,13 @@ public class HelpScreen extends Screen {
 
         addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.back"),
             b -> Minecraft.getInstance().gui.setScreen(parent)).bounds(width / 2 - 50, height - 28, 100, 18).build());
+
+        // "▶ Tutorial" — replay the animated walkthrough. Placed top-right of the guide header (a
+        // reliably free spot); returns to this guide when closed.
+        addRenderableWidget(StyledButton.styledBuilder(
+            Component.literal("▶ ").append(Component.translatable("inventory-organizer.button.tutorial")),
+            b -> Minecraft.getInstance().gui.setScreen(new TutorialScreen(this)))
+            .bounds(width - 90, 6, 84, 16).build());
     }
 
     @Override

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "inventory-organizer",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "name": "Inventory Organizer",
   "description": "A Minecraft mod that organizes your inventory with a button below the crafting table",
   "authors": ["Zefryxis"],

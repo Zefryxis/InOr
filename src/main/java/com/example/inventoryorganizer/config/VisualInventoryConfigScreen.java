@@ -90,6 +90,8 @@ public class VisualInventoryConfigScreen extends Screen {
     private Button groupsBtn;
     // Deferred first-run onboarding (mode picker), consumed in extractRenderState so setScreen is safe.
     private boolean pendingOnboarding = false;
+    // Deferred first-run Tutorial (animated walkthrough), chained after the mode picker, before the guide.
+    private boolean pendingTutorial = false;
 
     // --- Storage mode ---
     private boolean showStorage = false;
@@ -644,6 +646,10 @@ public class VisualInventoryConfigScreen extends Screen {
         // reopened hub. Never triggered in the transient Trash editor.
         if (transientPreset == null && !config.isFirstRunDone()) pendingOnboarding = true;
 
+        // First launch → auto-play the animated Tutorial once (chained after the mode picker, before
+        // the text guide). Replayable anytime via the Tutorial button.
+        if (transientPreset == null && !config.isTutorialSeen()) pendingTutorial = true;
+
         // First time the settings are opened, drop the user into the full feature guide.
         if (transientPreset == null && !config.isHelpSeen()) pendingFirstHelp = true;
     }
@@ -663,6 +669,15 @@ public class VisualInventoryConfigScreen extends Screen {
         if (pendingOnboarding) {
             pendingOnboarding = false;
             Minecraft.getInstance().gui.setScreen(new ComplexityOnboardingScreen(this));
+            return;
+        }
+
+        // First launch → play the animated Tutorial once (after the mode picker, before the guide).
+        if (pendingTutorial) {
+            pendingTutorial = false;
+            config.setTutorialSeen(true);
+            config.save();
+            Minecraft.getInstance().gui.setScreen(new TutorialScreen(this));
             return;
         }
 

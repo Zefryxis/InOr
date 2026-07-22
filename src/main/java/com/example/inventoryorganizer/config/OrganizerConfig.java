@@ -297,6 +297,20 @@ public class OrganizerConfig {
         setPreference("help_seen", new String[]{seen ? "true" : "false"});
     }
 
+    /**
+     * Whether the player has seen the animated Tutorial (auto-plays once on first launch, replayable
+     * anytime via the Tutorial button). Backed by preference key "tutorial_seen"; independent from
+     * help_seen / first_run_done so each first-run screen tracks its own "shown once" state.
+     */
+    public boolean isTutorialSeen() {
+        String[] arr = getPreference("tutorial_seen");
+        return arr.length > 0 && "true".equals(arr[0]);
+    }
+
+    public void setTutorialSeen(boolean seen) {
+        setPreference("tutorial_seen", new String[]{seen ? "true" : "false"});
+    }
+
     // --- Complexity mode -------------------------------------------------
     // Global UI complexity level, controlling how much of the config is exposed.
     // Stored in the generic preferences map under key "complexity_mode".

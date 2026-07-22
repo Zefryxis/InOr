@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.6.1 — 26.2
+
+A small but meaningful update: a brand-new in-game Tutorial for players still finding their footing with the mod, plus a fix for a false-positive bug affecting vanilla containers.
+
+### New: interactive Tutorial
+- A short, animated in-engine walkthrough of how Inventory Organizer thinks — exact-item slot rules, automatic sorting via Ranks (with a concrete Netherite vs. Diamond pickaxe example), same-tier tie-breaking, Warehouse linking, Bundle Profile pairing, potion rules, and custom-group ranking.
+- Includes a quick-reference cheat-sheet table covering all three "which criterion decided" scenarios, plus an explicit note that being first in the priority list doesn't mean the other criteria are ignored — it just gets the first say, handing off to the next one only on a tie.
+- Auto-plays once on first launch, and is replayable anytime from a new "▶ Tutorial" button in the Guide.
+- Ends with an honest disclaimer and a link to the [issue tracker](https://github.com/Zefryxis/InOr/issues) for reporting bugs.
+- Fully localized in all 9 supported languages.
+
+### Bug fix
+- Vanilla Dispenser, Dropper, and Hopper were wrongly flagged as "modded" containers (OST/profile buttons + a bogus "Modded chest" warning), because they use their own screen classes rather than the vanilla chest screen and fell through the modded-container detector. Now correctly excluded and ignored.
+
 ## 1.6.0 — 26.2
 
 A UX and reliability pass: the mod can now start dead simple and grow with you, sorting defaults got a research-backed tune-up, and a long-standing Bundle Profiles bug that made profiles match almost anything is fixed for good.

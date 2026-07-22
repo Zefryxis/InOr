@@ -613,6 +613,12 @@ public class InventoryOrganizerClient implements ClientModInitializer {
             if (screen instanceof InventoryScreen) return;          // player inventory
             if (screen instanceof net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen) return;
             if (screen instanceof net.minecraft.client.gui.screens.inventory.CraftingScreen) return;
+            // Vanilla Dispenser/Dropper (DispenserScreen, 9 slots) and Hopper (HopperScreen, 5 slots)
+            // both use their own screen class rather than ContainerScreen, so without this check they
+            // fell through into the generic-modded-container path below and got wrongly flagged as a
+            // "modded chest" (profile warning) even though they're plain vanilla blocks.
+            if (screen instanceof net.minecraft.client.gui.screens.inventory.DispenserScreen) return;
+            if (screen instanceof net.minecraft.client.gui.screens.inventory.HopperScreen) return;
             int kind = classifyContainer(acs);
             if (kind == CONTAINER_NONE) return;     // machine / not a storage GUI → leave alone
 
