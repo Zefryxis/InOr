@@ -57,6 +57,7 @@ public final class RemoteCraftPanel {
     private final List<String> headerText = new ArrayList<>();
     private EditBox search;
     private EditBox qty;
+    private Button upBtn, downBtn, cycleBtn;
 
     // Chest section: header/search/qty/scroll + the scrollable list. All glued together, left or right.
     private int panelX, panelY, panelW;
@@ -87,12 +88,14 @@ public final class RemoteCraftPanel {
         search.setResponder(s -> { scroll = 0; rebuild(); });
         Screens.getWidgets(screen).add(search);
 
-        Screens.getWidgets(screen).add(Button.builder(Component.literal("▲"), b -> {
+        upBtn = Button.builder(Component.literal("▲"), b -> {
             scroll = Math.max(0, scroll - 1); rebuild();
-        }).bounds(panelX + panelW - 30, panelY, 14, 14).build());
-        Screens.getWidgets(screen).add(Button.builder(Component.literal("▼"), b -> {
+        }).bounds(panelX + panelW - 30, panelY, 14, 14).build();
+        Screens.getWidgets(screen).add(upBtn);
+        downBtn = Button.builder(Component.literal("▼"), b -> {
             scroll++; rebuild();
-        }).bounds(panelX + panelW - 15, panelY, 14, 14).build());
+        }).bounds(panelX + panelW - 15, panelY, 14, 14).build();
+        Screens.getWidgets(screen).add(downBtn);
 
         // Qty box (how many to pull per click). Default 1.
         qty = new EditBox(mc.font, panelX + 26, panelY + 16, 44, 14, Component.literal("Qty"));
@@ -101,9 +104,9 @@ public final class RemoteCraftPanel {
         Screens.getWidgets(screen).add(qty);
 
         // Position-cycle button (tiny, top-right of the header): move the whole chest section to the
-        // other side, e.g. to get out of JEI's way. (The separate OI/Kit/Settings/Wh action buttons have
-        // their own above/below/right cycle in RemoteActionButtons.)
-        Screens.getWidgets(screen).add(Button.builder(Component.literal("⇄"), b -> {
+        // other side, e.g. to get out of JEI's way. (The survival-inventory OI/Kit/Settings/Wh row has
+        // its own separate above/below/right cycle, in InventoryScreenMixin.)
+        cycleBtn = Button.builder(Component.literal("⇄"), b -> {
             RemoteCraftHudSettings s = OrganizerConfig.get().getRemoteCraftHud();
             s.setChestPos(s.chestPos == RemoteCraftHudSettings.ChestPos.RIGHT
                     ? RemoteCraftHudSettings.ChestPos.LEFT : RemoteCraftHudSettings.ChestPos.RIGHT);
@@ -112,7 +115,8 @@ public final class RemoteCraftPanel {
         }).bounds(panelX + panelW - 14, panelY - 12, 14, 11)
                 .tooltip(net.minecraft.client.gui.components.Tooltip.create(
                         Component.translatable("inventory-organizer.remotecraft.cycle_chest_pos.tooltip")))
-                .build());
+                .build();
+        Screens.getWidgets(screen).add(cycleBtn);
 
         // Deposit slot: a click while holding an item on the cursor sends the held stack to a nearby chest
         // (the server reads the cursor stack and sorts the chest). The button is invisible-ish under the
@@ -198,10 +202,22 @@ public final class RemoteCraftPanel {
         }
         if (depositBtn != null) depositBtn.setPosition(depositX, depositY);
         if (moveToggleBtn != null) moveToggleBtn.setPosition(depositX + DEP - 6, depositY - 6);
+
+        // Re-sync the header widgets' positions too — layout() only recomputes panelX/panelY/panelW as
+        // plain fields, it doesn't move the ALREADY-CREATED search/qty/scroll/cycle widgets on its own.
+        // Without this, flipping chestPos moved the drawn list/frame but left the search box etc. behind.
+        if (search != null) {
+            search.setPosition(panelX, panelY);
+            search.setWidth(panelW - 32);
+            upBtn.setPosition(panelX + panelW - 30, panelY);
+            downBtn.setPosition(panelX + panelW - 15, panelY);
+            qty.setPosition(panelX + 26, panelY + 16);
+            cycleBtn.setPosition(panelX + panelW - 14, panelY - 12);
+        }
     }
 
-    /** Re-run layout + rebuild (e.g. after a position setting changed elsewhere, such as the shared
-     *  buttons-position cycle in {@link RemoteActionButtons} auto-flipping this panel's chest side). */
+    /** Re-run layout + rebuild (e.g. after a position setting changed elsewhere that might also affect
+     *  this panel's chest side, such as the RIGHT/RIGHT auto-flip conflict rule). */
     public void relayout() { layout(); rebuild(); }
 
     /** The screen this panel is attached to (used by the client to self-heal a lost panel). */

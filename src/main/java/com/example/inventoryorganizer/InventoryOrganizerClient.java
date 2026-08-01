@@ -48,15 +48,15 @@ public class InventoryOrganizerClient implements ClientModInitializer {
     private static Runnable chestProfileRefresh = null;
     private static int chestProfileVersionSeen = 0;
     private static com.example.inventoryorganizer.crafting.RemoteCraftPanel craftPanel = null;
-    private static com.example.inventoryorganizer.crafting.RemoteActionButtons craftActionButtons = null;
     private static net.minecraft.client.gui.screens.Screen craftHookedScreen = null;
 
-    /** Re-run layout for both the Remote Crafting panel and its action-button group (called after either
-     *  one's position-cycle button changes a shared setting that might affect the other, e.g. the
-     *  RIGHT/RIGHT auto-flip in {@link com.example.inventoryorganizer.config.RemoteCraftHudSettings}). */
+    /** Re-run the Remote Crafting panel's layout (called after its chest-position cycle button changes
+     *  a setting that might also affect the survival-inventory action-button row's position — see the
+     *  RIGHT/RIGHT auto-flip in {@link com.example.inventoryorganizer.config.RemoteCraftHudSettings} —
+     *  that row re-syncs its own position every frame in {@code InventoryScreenMixin}, so no separate
+     *  call is needed for it here). */
     public static void relayoutRemoteCraftUi() {
         if (craftPanel != null) craftPanel.relayout();
-        if (craftActionButtons != null) craftActionButtons.relayout();
     }
     private static int lastGuiLeftPos = Integer.MIN_VALUE; // detect GUI shift (recipe book toggle) to re-layout overlays
     private static int chestResolveTick = 0;
@@ -470,8 +470,6 @@ public class InventoryOrganizerClient implements ClientModInitializer {
             // frame + item icons vanish (the panel object was still alive, but nothing drew it).
             craftPanel = new com.example.inventoryorganizer.crafting.RemoteCraftPanel(
                     (net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>) screen);
-            craftActionButtons = new com.example.inventoryorganizer.crafting.RemoteActionButtons(
-                    (net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>) screen);
             craftHookedScreen = screen;
             net.fabricmc.fabric.api.client.screen.v1.ScreenEvents.afterExtract(screen).register((sc, context, mx, my, delta) -> {
                 if (craftPanel != null) craftPanel.render(context, mx, my);
@@ -497,7 +495,7 @@ public class InventoryOrganizerClient implements ClientModInitializer {
                         || (key >= 262 && key <= 265) /*arrows*/ || key == 268 /*home*/ || key == 269 /*end*/;
                 return editKey || ctrl; // allow editing/escape/shortcuts; cancel everything else
             });
-            ScreenEvents.remove(screen).register(s -> { craftPanel = null; craftActionButtons = null; craftHookedScreen = null; });
+            ScreenEvents.remove(screen).register(s -> { craftPanel = null; craftHookedScreen = null; });
         });
 
         // --- Shulker boxes -------------------------------------------------------------------------
