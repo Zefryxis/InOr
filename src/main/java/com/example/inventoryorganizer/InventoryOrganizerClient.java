@@ -463,7 +463,7 @@ public class InventoryOrganizerClient implements ClientModInitializer {
                     (net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>) screen);
             craftHookedScreen = screen;
             net.fabricmc.fabric.api.client.screen.v1.ScreenEvents.afterExtract(screen).register((sc, context, mx, my, delta) -> {
-                if (craftPanel != null) craftPanel.render(context);
+                if (craftPanel != null) craftPanel.render(context, mx, my);
             });
             // Mouse-wheel scrolling while the cursor is over the materials list.
             net.fabricmc.fabric.api.client.screen.v1.ScreenMouseEvents.allowMouseScroll(screen).register((sc, mx, my, hAmt, vAmt) -> {

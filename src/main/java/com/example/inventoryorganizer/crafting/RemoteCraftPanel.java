@@ -1,5 +1,7 @@
 package com.example.inventoryorganizer.crafting;
 
+import com.example.inventoryorganizer.config.OrganizerConfig;
+import com.example.inventoryorganizer.config.RemoteCraftHudSettings;
 import com.example.inventoryorganizer.config.VisualInventoryConfigScreen;
 import com.example.inventoryorganizer.warehouse.WarehouseClient;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
@@ -26,6 +28,12 @@ import java.util.Map;
  *
  * <p>Built from Button/EditBox widgets (reliable clicks) plus an {@code afterExtract} render pass that
  * draws the item icons, header and labels on top.
+ *
+ * <p>The layout is split into three independently positionable pieces (see {@link RemoteCraftHudSettings}),
+ * added so the panel can be moved out of the way of other mods (e.g. JEI) that also dock to the right:
+ * the scrollable <b>chest section</b> (left/right of the GUI), the <b>buttons section</b> — search/qty/
+ * scroll controls — (above/below/right of the GUI), and the freely-draggable <b>deposit</b> ("send item
+ * to chest") button.
  */
 public final class RemoteCraftPanel {
 
@@ -49,10 +57,24 @@ public final class RemoteCraftPanel {
     private final List<String> headerText = new ArrayList<>();
     private EditBox search;
     private EditBox qty;
-    private int panelX, panelY, panelW, visRows;
+
+    // Chest section (the scrollable/searchable list).
+    private int panelX, panelY, panelW;
     private int listTopY, listBottomY;         // vertical bounds of the scrollable list (for hit-testing scroll)
-    private int depositX, depositY;            // the deposit slot (put a held item here → into a chest)
+    private int visRows;
+
+    // Buttons section (search/qty/scroll cluster) — independently positioned from the chest section.
+    private int buttonsX, buttonsY, buttonsW;
+
+    // Deposit slot (put a held item here → into a chest); freely draggable.
+    private int depositX, depositY;
     private static final int DEP = 18;         // deposit slot size
+    private Button depositBtn;
+    private Button moveToggleBtn;
+    private boolean dragMode = false;
+    private boolean dragWasDown = false;
+    private int dragDepositX, dragDepositY;    // live position while actively dragging
+
     private int scroll = 0;
     private int stockSeen = -1;
     private int tick = 0;
@@ -63,35 +85,76 @@ public final class RemoteCraftPanel {
         layout();
         Minecraft mc = Minecraft.getInstance();
 
-        search = new EditBox(mc.font, panelX, panelY, panelW - 32, 14, Component.literal("Search"));
+        search = new EditBox(mc.font, buttonsX, buttonsY, buttonsW - 32, 14, Component.literal("Search"));
         search.setHint(Component.literal("§7Search…"));
         search.setResponder(s -> { scroll = 0; rebuild(); });
         Screens.getWidgets(screen).add(search);
 
         Screens.getWidgets(screen).add(Button.builder(Component.literal("▲"), b -> {
             scroll = Math.max(0, scroll - 1); rebuild();
-        }).bounds(panelX + panelW - 30, panelY, 14, 14).build());
+        }).bounds(buttonsX + buttonsW - 30, buttonsY, 14, 14).build());
         Screens.getWidgets(screen).add(Button.builder(Component.literal("▼"), b -> {
             scroll++; rebuild();
-        }).bounds(panelX + panelW - 15, panelY, 14, 14).build());
+        }).bounds(buttonsX + buttonsW - 15, buttonsY, 14, 14).build());
 
         // Qty box (how many to pull per click). Default 1.
-        qty = new EditBox(mc.font, panelX + 26, panelY + 16, 44, 14, Component.literal("Qty"));
+        qty = new EditBox(mc.font, buttonsX + 26, buttonsY + 16, 44, 14, Component.literal("Qty"));
         qty.setValue("1");
         qty.setMaxLength(5);
         Screens.getWidgets(screen).add(qty);
 
+        // Position-cycle buttons (tiny, top-right of the buttons cluster): let the player move the chest
+        // section left/right and the buttons section above/below/right, e.g. to get out of JEI's way.
+        Screens.getWidgets(screen).add(Button.builder(Component.literal("⇄"), b -> {
+            RemoteCraftHudSettings s = OrganizerConfig.get().getRemoteCraftHud();
+            s.setChestPos(s.chestPos == RemoteCraftHudSettings.ChestPos.RIGHT
+                    ? RemoteCraftHudSettings.ChestPos.LEFT : RemoteCraftHudSettings.ChestPos.RIGHT);
+            OrganizerConfig.get().save();
+            layout(); rebuild();
+        }).bounds(buttonsX + buttonsW - 44, buttonsY - 12, 14, 11)
+                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.translatable("inventory-organizer.remotecraft.cycle_chest_pos.tooltip")))
+                .build());
+        Screens.getWidgets(screen).add(Button.builder(Component.literal("⇅"), b -> {
+            RemoteCraftHudSettings s = OrganizerConfig.get().getRemoteCraftHud();
+            RemoteCraftHudSettings.ButtonsPos next = switch (s.buttonsPos) {
+                case ABOVE -> RemoteCraftHudSettings.ButtonsPos.BELOW;
+                case BELOW -> RemoteCraftHudSettings.ButtonsPos.RIGHT;
+                case RIGHT -> RemoteCraftHudSettings.ButtonsPos.ABOVE;
+            };
+            s.setButtonsPos(next);
+            OrganizerConfig.get().save();
+            layout(); rebuild();
+        }).bounds(buttonsX + buttonsW - 29, buttonsY - 12, 14, 11)
+                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.translatable("inventory-organizer.remotecraft.cycle_buttons_pos.tooltip")))
+                .build());
+
         // Deposit slot: a click while holding an item on the cursor sends the held stack to a nearby chest
         // (the server reads the cursor stack and sorts the chest). The button is invisible-ish under the
         // slot graphic drawn in render(); clicking the region triggers the deposit.
-        Screens.getWidgets(screen).add(Button.builder(Component.literal(""), b -> {
+        depositBtn = Button.builder(Component.literal(""), b -> {
             // Holding an item → deposit it into a chest. Empty hand → "cancel recipe": send the whole
             // crafting grid back to the chests (each ingredient → a chest, each chest OST'd).
             boolean holding = mc.player != null && !mc.player.containerMenu.getCarried().isEmpty();
             if (holding) WarehouseClient.depositCarried();
             else WarehouseClient.returnGrid();
             WarehouseClient.requestCraftStock();
-        }).bounds(depositX, depositY, DEP, DEP).build());
+        }).bounds(depositX, depositY, DEP, DEP).build();
+        Screens.getWidgets(screen).add(depositBtn);
+
+        // Move handle: click to arm free-drag mode (deposit slot then follows the cursor each frame,
+        // via the GLFW mouse-button poll in updateDrag(), until the mouse is released).
+        moveToggleBtn = Button.builder(Component.literal("✥"), b -> {
+            dragMode = true;
+            dragWasDown = true; // the click that triggered this IS the current press — avoid a false release edge
+            depositBtn.visible = false; depositBtn.active = false;
+            moveToggleBtn.visible = false;
+        }).bounds(depositX + DEP - 6, depositY - 6, 9, 9)
+                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.translatable("inventory-organizer.remotecraft.move_deposit.tooltip")))
+                .build();
+        Screens.getWidgets(screen).add(moveToggleBtn);
 
         WarehouseClient.requestCraftStock();
         rebuild();
@@ -99,6 +162,7 @@ public final class RemoteCraftPanel {
 
     /** GUI dimensions of a crafting/inventory screen (vanilla constants). */
     private static final int GUI_W = 176, GUI_H = 166;
+    private static final int GAP = 4, MIN_W = 86, MAX_W = 160, MARGIN = 4, BTN_SECTION_H = 34;
 
     private void layout() {
         int guiLeft = (screen.width - GUI_W) / 2;
@@ -110,31 +174,79 @@ public final class RemoteCraftPanel {
             guiTop = acc.inorTopPos();
         } catch (Throwable ignored) {}
 
-        // Glue the panel to the GUI's RIGHT edge and let it MOVE WITH the GUI. layout() re-runs on every
-        // screen init — including window resize AND the recipe-book toggle (which shifts leftPos sideways)
-        // — so reading the live leftPos here keeps the panel attached to the GUI at any resolution / GUI
-        // scale. (screen.width/height are already in scaled GUI units, so widths sized from them adapt to
-        // the GUI-Scale option automatically.)
-        final int GAP = 4, MIN_W = 86, MAX_W = 160, MARGIN = 4;
+        // layout() re-runs on every screen init — including window resize AND the recipe-book toggle
+        // (which shifts leftPos sideways) — so reading the live leftPos here keeps everything attached
+        // to the GUI at any resolution / GUI scale. (screen.width/height are already in scaled GUI
+        // units, so widths sized from them adapt to the GUI-Scale option automatically.)
+        RemoteCraftHudSettings s = OrganizerConfig.get().getRemoteCraftHud();
         int guiRight = guiLeft + GUI_W;
-        // Adaptive width: fill the free space between the GUI's right edge and the screen edge, clamped.
-        int avail = screen.width - guiRight - GAP - MARGIN;
-        panelW = Math.max(MIN_W, Math.min(MAX_W, avail));
-        panelX = guiRight + GAP;
-        // Overflow guard for tiny resolutions / large GUI scale: if the panel would run off the right
-        // edge, pull it left so it stays fully on-screen (slight GUI overlap beats being clipped away).
-        if (panelX + panelW + MARGIN > screen.width) {
-            panelX = Math.max(MARGIN, screen.width - panelW - MARGIN);
+        int guiBottom = guiTop + GUI_H;
+
+        layoutChestSection(guiLeft, guiRight, guiTop, s);
+        layoutButtonsSection(guiLeft, guiTop, guiBottom, s);
+        layoutDeposit(s);
+    }
+
+    private void layoutChestSection(int guiLeft, int guiRight, int guiTop, RemoteCraftHudSettings s) {
+        int avail;
+        if (s.chestPos == RemoteCraftHudSettings.ChestPos.LEFT) {
+            avail = guiLeft - GAP - MARGIN;
+            panelW = Math.max(MIN_W, Math.min(MAX_W, avail));
+            panelX = guiLeft - GAP - panelW;
+            if (panelX < MARGIN) panelX = MARGIN; // overflow guard: slight GUI overlap beats clipping off-screen
+        } else {
+            avail = screen.width - guiRight - GAP - MARGIN;
+            panelW = Math.max(MIN_W, Math.min(MAX_W, avail));
+            panelX = guiRight + GAP;
+            if (panelX + panelW + MARGIN > screen.width) {
+                panelX = Math.max(MARGIN, screen.width - panelW - MARGIN);
+            }
         }
 
         panelY = Math.max(16, guiTop);
-        listTopY = panelY + 34;
+        // The +34 header offset is only needed when the buttons cluster is glued directly above the list
+        // (buttonsPos == RIGHT); ABOVE/BELOW frees that space for more visible rows.
+        listTopY = panelY + (s.buttonsPos == RemoteCraftHudSettings.ButtonsPos.RIGHT ? 34 : 0);
         listBottomY = screen.height - 8;
         visRows = Math.max(3, Math.min(14, (listBottomY - listTopY) / ROW_H));
-        // Deposit slot: directly UNDER the GUI (the player inventory), centred on the 176-wide GUI, so it
-        // tracks the GUI when the recipe book slides it sideways (layout() re-runs on every re-init).
-        depositX = guiLeft + (GUI_W - DEP) / 2;
-        depositY = guiTop + GUI_H + 3;
+    }
+
+    private void layoutButtonsSection(int guiLeft, int guiTop, int guiBottom, RemoteCraftHudSettings s) {
+        switch (s.buttonsPos) {
+            case ABOVE -> { buttonsX = guiLeft; buttonsY = guiTop - GAP - BTN_SECTION_H; buttonsW = GUI_W; }
+            case BELOW -> { buttonsX = guiLeft; buttonsY = guiBottom + GAP; buttonsW = GUI_W; }
+            case RIGHT -> { buttonsX = panelX; buttonsY = panelY; buttonsW = panelW; }
+        }
+    }
+
+    private void layoutDeposit(RemoteCraftHudSettings s) {
+        if (!s.depositMoved) {
+            // Legacy auto-spot: tuck it right after wherever the buttons cluster ended up if that's BELOW
+            // the GUI (so it doesn't visually detach), otherwise fall back to directly under the GUI as
+            // before (there's nothing else occupying that space in the ABOVE/RIGHT cases).
+            if (s.buttonsPos == RemoteCraftHudSettings.ButtonsPos.BELOW) {
+                depositX = buttonsX + (buttonsW - DEP) / 2;
+                depositY = buttonsY + BTN_SECTION_H + GAP;
+            } else {
+                int guiLeft = (screen.width - GUI_W) / 2;
+                int guiTop = (screen.height - GUI_H) / 2;
+                try {
+                    com.example.inventoryorganizer.mixin.ContainerScreenAccessor acc =
+                            (com.example.inventoryorganizer.mixin.ContainerScreenAccessor) screen;
+                    guiLeft = acc.inorLeftPos();
+                    guiTop = acc.inorTopPos();
+                } catch (Throwable ignored) {}
+                depositX = guiLeft + (GUI_W - DEP) / 2;
+                depositY = guiTop + GUI_H + 3;
+            }
+        } else {
+            depositX = (int) Math.round(s.depositX * screen.width) - DEP / 2;
+            depositY = (int) Math.round(s.depositY * screen.height) - DEP / 2;
+            depositX = Math.max(MARGIN, Math.min(screen.width - DEP - MARGIN, depositX));
+            depositY = Math.max(MARGIN, Math.min(screen.height - DEP - MARGIN, depositY));
+        }
+        if (depositBtn != null) depositBtn.setPosition(depositX, depositY);
+        if (moveToggleBtn != null) moveToggleBtn.setPosition(depositX + DEP - 6, depositY - 6);
     }
 
     /** The screen this panel is attached to (used by the client to self-heal a lost panel). */
@@ -234,20 +346,24 @@ public final class RemoteCraftPanel {
     }
 
     /** Render pass (afterExtract): decorated panel, header, Qty label, chest-name headers and item icons. */
-    public void render(GuiGraphicsExtractor context) {
-        Minecraft mc = Minecraft.getInstance();
-        // Decorated FRAME only (no body fill — a fill here is drawn over the buttons and dims them).
-        int bx = panelX - 4, by = panelY - 14, bw = panelW + 8, bh = (listBottomY + 4) - by;
+    public void render(GuiGraphicsExtractor context, int mouseX, int mouseY) {
+        updateDrag(mouseX, mouseY);
+        renderChestSection(context);
+        renderButtonsSection(context);
+        renderDeposit(context);
+    }
+
+    private void renderChestSection(GuiGraphicsExtractor context) {
+        int frameTop = listTopY - 16;
+        int bx = panelX - 4, by = frameTop, bw = panelW + 8, bh = (listBottomY + 4) - by;
         context.fill(bx, by, bx + bw, by + 1, 0xFFD8A24A);                          // top accent
         context.fill(bx, by + bh - 1, bx + bw, by + bh, 0xFFD8A24A);                // bottom accent
         context.fill(bx, by, bx + 1, by + bh, 0xFF6E5430);                          // left edge
         context.fill(bx + bw - 1, by, bx + bw, by + bh, 0xFF6E5430);                // right edge
-        // Separator under the search/qty header area.
+        // Separator under the header area.
         context.fill(bx + 2, listTopY - 3, bx + bw - 2, listTopY - 2, 0x66D8A24A);
 
-        int reach = (int) WarehouseClient.craftReach();
-        context.text(mc.font, Component.literal("§6§lMaterials §7(" + reach + "m)"), panelX, panelY - 11, 0xFFFFFFFF);
-        context.text(mc.font, Component.literal("§7Qty:"), panelX, panelY + 19, 0xFFAAAAAA);
+        Minecraft mc = Minecraft.getInstance();
         // Chest-name section headers.
         for (int i = 0; i < headerDraw.size(); i++) {
             int[] xy = headerDraw.get(i);
@@ -262,14 +378,25 @@ public final class RemoteCraftPanel {
                 VisualInventoryConfigScreen.drawItemIcon(context, icon, xy[0], xy[1]);
             }
         }
+    }
+
+    private void renderButtonsSection(GuiGraphicsExtractor context) {
+        Minecraft mc = Minecraft.getInstance();
+        int reach = (int) WarehouseClient.craftReach();
+        context.text(mc.font, Component.literal("§6§lMaterials §7(" + reach + "m)"), buttonsX, buttonsY - 11, 0xFFFFFFFF);
+        context.text(mc.font, Component.literal("§7Qty:"), buttonsX, buttonsY + 19, 0xFFAAAAAA);
         // Scroll hint when there's more than fits.
         if (allRows.size() > visRows) {
-            context.text(mc.font, Component.literal("§7scroll ⬍"), panelX + panelW - 40, panelY + 19, 0xFF888888);
+            context.text(mc.font, Component.literal("§7scroll ⬍"), buttonsX + buttonsW - 40, buttonsY + 19, 0xFF888888);
         }
+    }
 
+    private void renderDeposit(GuiGraphicsExtractor context) {
+        Minecraft mc = Minecraft.getInstance();
+        int x = dragMode ? dragDepositX : depositX;
+        int y = dragMode ? dragDepositY : depositY;
         // Deposit slot, drawn on top of its (click-catching) button so it looks like a real vanilla slot.
-        // Sits directly under the inventory and tracks the GUI. MC slot styling: dark inset + bevel.
-        int x = depositX, y = depositY;
+        // MC slot styling: dark inset + bevel.
         context.fill(x - 1, y - 1, x + DEP + 1, y + DEP + 1, 0xFF373737);          // outer frame
         context.fill(x, y, x + DEP, y + DEP, 0xFF8B8B8B);                          // light face
         context.fill(x, y, x + DEP - 1, y + DEP - 1, 0xFF373737);                  // top-left shadow
@@ -277,12 +404,50 @@ public final class RemoteCraftPanel {
         context.fill(x + 1, y + 1, x + DEP - 2, y + DEP - 2, 0xFF2B2B33);          // inner well (slightly blue-dark)
         // Downward arrow hint = "drop a held item here → it goes to a nearby chest".
         context.text(mc.font, Component.literal("§b⬇"), x + (DEP - mc.font.width("⬇")) / 2, y + 5, 0xFF66CCFF);
-        // Label centred under the slot. Two uses: drop a held item to stash it, or click empty-handed to
-        // send the whole crafting grid back to the chests (cancel the recipe).
-        Component lbl = Component.literal("§7→ chest");
-        context.text(mc.font, lbl, x + DEP / 2 - mc.font.width(lbl.getString()) / 2, y + DEP + 2, 0xFFAAAAAA);
-        Component lbl2 = Component.literal("§8(empty hand = grid→chest)");
-        context.text(mc.font, lbl2, x + DEP / 2 - mc.font.width(lbl2.getString()) / 2, y + DEP + 12, 0xFF888888);
+        if (dragMode) {
+            Component lbl = Component.literal("§e release to drop");
+            context.text(mc.font, lbl, x + DEP + 4, y + 4, 0xFFFFDD55);
+        } else {
+            // Label centred under the slot. Two uses: drop a held item to stash it, or click empty-handed
+            // to send the whole crafting grid back to the chests (cancel the recipe).
+            Component lbl = Component.literal("§7→ chest");
+            context.text(mc.font, lbl, x + DEP / 2 - mc.font.width(lbl.getString()) / 2, y + DEP + 2, 0xFFAAAAAA);
+            Component lbl2 = Component.literal("§8(empty hand = grid→chest)");
+            context.text(mc.font, lbl2, x + DEP / 2 - mc.font.width(lbl2.getString()) / 2, y + DEP + 12, 0xFF888888);
+        }
+    }
+
+    /**
+     * While {@link #dragMode} is armed, follow the cursor each frame (polling the raw GLFW mouse-button
+     * state, since Button.onPress only fires once on press and this needs to track the button being
+     * HELD across frames). On release, persist the new position as a screen-fraction (resolution-
+     * independent, same convention as the existing configurable HUD overlay) and exit drag mode.
+     */
+    private void updateDrag(int mouseX, int mouseY) {
+        if (!dragMode) return;
+        boolean down;
+        try {
+            long win = Minecraft.getInstance().getWindow().handle();
+            down = org.lwjgl.glfw.GLFW.glfwGetMouseButton(win, org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_1)
+                    == org.lwjgl.glfw.GLFW.GLFW_PRESS;
+        } catch (Throwable t) {
+            down = false; // defensive: never let a raw GLFW query crash the render pass
+        }
+        dragDepositX = Math.max(MARGIN, Math.min(screen.width - DEP - MARGIN, mouseX - DEP / 2));
+        dragDepositY = Math.max(MARGIN, Math.min(screen.height - DEP - MARGIN, mouseY - DEP / 2));
+        if (!down && dragWasDown) {
+            RemoteCraftHudSettings s = OrganizerConfig.get().getRemoteCraftHud();
+            s.depositMoved = true;
+            s.depositX = (dragDepositX + DEP / 2.0) / screen.width;
+            s.depositY = (dragDepositY + DEP / 2.0) / screen.height;
+            OrganizerConfig.get().save();
+            dragMode = false;
+            layout();
+            rebuild();
+            if (depositBtn != null) { depositBtn.visible = true; depositBtn.active = true; }
+            if (moveToggleBtn != null) moveToggleBtn.visible = true;
+        }
+        dragWasDown = down;
     }
 
     /** The per-chest PROFILE name bound to this position (mod storage profile), else the server fallback. */

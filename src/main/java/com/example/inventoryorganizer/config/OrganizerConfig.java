@@ -70,6 +70,9 @@ public class OrganizerConfig {
     // Configurable HUD overlay: per-element visibility + fractional screen position. All off by default.
     private HudSettings hud = new HudSettings();
 
+    // Remote Crafting panel layout: chest-list side, buttons-section side, deposit-button drag state.
+    private RemoteCraftHudSettings remoteCraftHud = new RemoteCraftHudSettings();
+
     // Remote crafting: when filling a recipe, prefer pulling ingredients from nearby chests (true) vs
     // using the player's own inventory first (false). Default: prefer chests.
     private boolean craftPreferChests = true;
@@ -142,6 +145,12 @@ public class OrganizerConfig {
     public HudSettings getHud() {
         if (hud == null) hud = new HudSettings();
         return hud;
+    }
+
+    /** Remote Crafting panel layout settings (never null). */
+    public RemoteCraftHudSettings getRemoteCraftHud() {
+        if (remoteCraftHud == null) remoteCraftHud = new RemoteCraftHudSettings();
+        return remoteCraftHud;
     }
 
     /** Remote crafting: prefer pulling recipe ingredients from chests over the player's inventory. */
@@ -1162,6 +1171,7 @@ public class OrganizerConfig {
         if (o.nothingChests != null) this.nothingChests = o.nothingChests;
         if (o.genericChests != null) this.genericChests = o.genericChests;
         if (o.hud != null) this.hud = o.hud;
+        if (o.remoteCraftHud != null) this.remoteCraftHud = o.remoteCraftHud;
         this.craftPreferChests = o.craftPreferChests;
         this.autoRefillEnabled = o.autoRefillEnabled;
         if (o.bundleProfiles != null) this.bundleProfiles = o.bundleProfiles;
