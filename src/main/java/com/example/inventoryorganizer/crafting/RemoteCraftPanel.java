@@ -171,9 +171,24 @@ public final class RemoteCraftPanel {
 
         int avail;
         if (s.chestPos == RemoteCraftHudSettings.ChestPos.LEFT) {
-            avail = guiLeft - GAP - MARGIN;
+            // The vanilla recipe book (crafting table AND survival inventory both have one) opens
+            // directly to the left of the GUI, in the same space we'd otherwise use — without this,
+            // the panel would render right on top of it. Push further left by the book's fixed width
+            // whenever it's open.
+            int bookExtra = 0;
+            try {
+                if (screen instanceof net.minecraft.client.gui.screens.inventory.AbstractRecipeBookScreen<?> rb) {
+                    net.minecraft.client.gui.screens.recipebook.RecipeBookComponent<?> comp =
+                            ((com.example.inventoryorganizer.mixin.RecipeBookScreenAccessor) rb).inorRecipeBookComponent();
+                    if (comp != null && comp.isVisible()) {
+                        bookExtra = net.minecraft.client.gui.screens.recipebook.RecipeBookComponent.IMAGE_WIDTH + GAP;
+                    }
+                }
+            } catch (Throwable ignored) {}
+
+            avail = guiLeft - GAP - MARGIN - bookExtra;
             panelW = Math.max(MIN_W, Math.min(MAX_W, avail));
-            panelX = guiLeft - GAP - panelW;
+            panelX = guiLeft - GAP - panelW - bookExtra;
             if (panelX < MARGIN) panelX = MARGIN; // overflow guard: slight GUI overlap beats clipping off-screen
         } else {
             avail = screen.width - guiRight - GAP - MARGIN;
