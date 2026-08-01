@@ -29,11 +29,11 @@ import java.util.Map;
  * <p>Built from Button/EditBox widgets (reliable clicks) plus an {@code afterExtract} render pass that
  * draws the item icons, header and labels on top.
  *
- * <p>The layout is split into three independently positionable pieces (see {@link RemoteCraftHudSettings}),
- * added so the panel can be moved out of the way of other mods (e.g. JEI) that also dock to the right:
- * the scrollable <b>chest section</b> (left/right of the GUI), the <b>buttons section</b> — search/qty/
- * scroll controls — (above/below/right of the GUI), and the freely-draggable <b>deposit</b> ("send item
- * to chest") button.
+ * <p>The chest section (search/qty/scroll + the scrollable list — these always move together, see
+ * {@link RemoteCraftHudSettings#chestPos}) can sit on the left or right of the GUI, so the panel can be
+ * moved out of the way of other mods (e.g. JEI) that also dock to the right. The freely-draggable
+ * <b>deposit</b> ("send item to chest") slot is positioned independently. The separate utility action
+ * buttons (OI/Kit/Settings/Wh) live in {@link RemoteActionButtons}, not here.
  */
 public final class RemoteCraftPanel {
 
@@ -58,15 +58,12 @@ public final class RemoteCraftPanel {
     private EditBox search;
     private EditBox qty;
 
-    // Chest section (the scrollable/searchable list).
+    // Chest section: header/search/qty/scroll + the scrollable list. All glued together, left or right.
     private int panelX, panelY, panelW;
     private int listTopY, listBottomY;         // vertical bounds of the scrollable list (for hit-testing scroll)
     private int visRows;
 
-    // Buttons section (search/qty/scroll cluster) — independently positioned from the chest section.
-    private int buttonsX, buttonsY, buttonsW;
-
-    // Deposit slot (put a held item here → into a chest); freely draggable.
+    // Deposit slot (put a held item here → into a chest); freely draggable independently of the above.
     private int depositX, depositY;
     private static final int DEP = 18;         // deposit slot size
     private Button depositBtn;
@@ -85,49 +82,36 @@ public final class RemoteCraftPanel {
         layout();
         Minecraft mc = Minecraft.getInstance();
 
-        search = new EditBox(mc.font, buttonsX, buttonsY, buttonsW - 32, 14, Component.literal("Search"));
+        search = new EditBox(mc.font, panelX, panelY, panelW - 32, 14, Component.literal("Search"));
         search.setHint(Component.literal("§7Search…"));
         search.setResponder(s -> { scroll = 0; rebuild(); });
         Screens.getWidgets(screen).add(search);
 
         Screens.getWidgets(screen).add(Button.builder(Component.literal("▲"), b -> {
             scroll = Math.max(0, scroll - 1); rebuild();
-        }).bounds(buttonsX + buttonsW - 30, buttonsY, 14, 14).build());
+        }).bounds(panelX + panelW - 30, panelY, 14, 14).build());
         Screens.getWidgets(screen).add(Button.builder(Component.literal("▼"), b -> {
             scroll++; rebuild();
-        }).bounds(buttonsX + buttonsW - 15, buttonsY, 14, 14).build());
+        }).bounds(panelX + panelW - 15, panelY, 14, 14).build());
 
         // Qty box (how many to pull per click). Default 1.
-        qty = new EditBox(mc.font, buttonsX + 26, buttonsY + 16, 44, 14, Component.literal("Qty"));
+        qty = new EditBox(mc.font, panelX + 26, panelY + 16, 44, 14, Component.literal("Qty"));
         qty.setValue("1");
         qty.setMaxLength(5);
         Screens.getWidgets(screen).add(qty);
 
-        // Position-cycle buttons (tiny, top-right of the buttons cluster): let the player move the chest
-        // section left/right and the buttons section above/below/right, e.g. to get out of JEI's way.
+        // Position-cycle button (tiny, top-right of the header): move the whole chest section to the
+        // other side, e.g. to get out of JEI's way. (The separate OI/Kit/Settings/Wh action buttons have
+        // their own above/below/right cycle in RemoteActionButtons.)
         Screens.getWidgets(screen).add(Button.builder(Component.literal("⇄"), b -> {
             RemoteCraftHudSettings s = OrganizerConfig.get().getRemoteCraftHud();
             s.setChestPos(s.chestPos == RemoteCraftHudSettings.ChestPos.RIGHT
                     ? RemoteCraftHudSettings.ChestPos.LEFT : RemoteCraftHudSettings.ChestPos.RIGHT);
             OrganizerConfig.get().save();
-            layout(); rebuild();
-        }).bounds(buttonsX + buttonsW - 44, buttonsY - 12, 14, 11)
+            com.example.inventoryorganizer.InventoryOrganizerClient.relayoutRemoteCraftUi();
+        }).bounds(panelX + panelW - 14, panelY - 12, 14, 11)
                 .tooltip(net.minecraft.client.gui.components.Tooltip.create(
                         Component.translatable("inventory-organizer.remotecraft.cycle_chest_pos.tooltip")))
-                .build());
-        Screens.getWidgets(screen).add(Button.builder(Component.literal("⇅"), b -> {
-            RemoteCraftHudSettings s = OrganizerConfig.get().getRemoteCraftHud();
-            RemoteCraftHudSettings.ButtonsPos next = switch (s.buttonsPos) {
-                case ABOVE -> RemoteCraftHudSettings.ButtonsPos.BELOW;
-                case BELOW -> RemoteCraftHudSettings.ButtonsPos.RIGHT;
-                case RIGHT -> RemoteCraftHudSettings.ButtonsPos.ABOVE;
-            };
-            s.setButtonsPos(next);
-            OrganizerConfig.get().save();
-            layout(); rebuild();
-        }).bounds(buttonsX + buttonsW - 29, buttonsY - 12, 14, 11)
-                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
-                        Component.translatable("inventory-organizer.remotecraft.cycle_buttons_pos.tooltip")))
                 .build());
 
         // Deposit slot: a click while holding an item on the cursor sends the held stack to a nearby chest
@@ -162,7 +146,7 @@ public final class RemoteCraftPanel {
 
     /** GUI dimensions of a crafting/inventory screen (vanilla constants). */
     private static final int GUI_W = 176, GUI_H = 166;
-    private static final int GAP = 4, MIN_W = 86, MAX_W = 160, MARGIN = 4, BTN_SECTION_H = 34;
+    private static final int GAP = 4, MIN_W = 86, MAX_W = 160, MARGIN = 4;
 
     private void layout() {
         int guiLeft = (screen.width - GUI_W) / 2;
@@ -180,14 +164,7 @@ public final class RemoteCraftPanel {
         // units, so widths sized from them adapt to the GUI-Scale option automatically.)
         RemoteCraftHudSettings s = OrganizerConfig.get().getRemoteCraftHud();
         int guiRight = guiLeft + GUI_W;
-        int guiBottom = guiTop + GUI_H;
 
-        layoutChestSection(guiLeft, guiRight, guiTop, s);
-        layoutButtonsSection(guiLeft, guiTop, guiBottom, s);
-        layoutDeposit(s);
-    }
-
-    private void layoutChestSection(int guiLeft, int guiRight, int guiTop, RemoteCraftHudSettings s) {
         int avail;
         if (s.chestPos == RemoteCraftHudSettings.ChestPos.LEFT) {
             avail = guiLeft - GAP - MARGIN;
@@ -204,41 +181,15 @@ public final class RemoteCraftPanel {
         }
 
         panelY = Math.max(16, guiTop);
-        // The +34 header offset is only needed when the buttons cluster is glued directly above the list
-        // (buttonsPos == RIGHT); ABOVE/BELOW frees that space for more visible rows.
-        listTopY = panelY + (s.buttonsPos == RemoteCraftHudSettings.ButtonsPos.RIGHT ? 34 : 0);
+        listTopY = panelY + 34;
         listBottomY = screen.height - 8;
         visRows = Math.max(3, Math.min(14, (listBottomY - listTopY) / ROW_H));
-    }
 
-    private void layoutButtonsSection(int guiLeft, int guiTop, int guiBottom, RemoteCraftHudSettings s) {
-        switch (s.buttonsPos) {
-            case ABOVE -> { buttonsX = guiLeft; buttonsY = guiTop - GAP - BTN_SECTION_H; buttonsW = GUI_W; }
-            case BELOW -> { buttonsX = guiLeft; buttonsY = guiBottom + GAP; buttonsW = GUI_W; }
-            case RIGHT -> { buttonsX = panelX; buttonsY = panelY; buttonsW = panelW; }
-        }
-    }
-
-    private void layoutDeposit(RemoteCraftHudSettings s) {
+        // Deposit slot: legacy spot is directly UNDER the GUI (unless the player has dragged it
+        // elsewhere), centred on the 176-wide GUI, so it tracks the GUI when the recipe book slides it.
         if (!s.depositMoved) {
-            // Legacy auto-spot: tuck it right after wherever the buttons cluster ended up if that's BELOW
-            // the GUI (so it doesn't visually detach), otherwise fall back to directly under the GUI as
-            // before (there's nothing else occupying that space in the ABOVE/RIGHT cases).
-            if (s.buttonsPos == RemoteCraftHudSettings.ButtonsPos.BELOW) {
-                depositX = buttonsX + (buttonsW - DEP) / 2;
-                depositY = buttonsY + BTN_SECTION_H + GAP;
-            } else {
-                int guiLeft = (screen.width - GUI_W) / 2;
-                int guiTop = (screen.height - GUI_H) / 2;
-                try {
-                    com.example.inventoryorganizer.mixin.ContainerScreenAccessor acc =
-                            (com.example.inventoryorganizer.mixin.ContainerScreenAccessor) screen;
-                    guiLeft = acc.inorLeftPos();
-                    guiTop = acc.inorTopPos();
-                } catch (Throwable ignored) {}
-                depositX = guiLeft + (GUI_W - DEP) / 2;
-                depositY = guiTop + GUI_H + 3;
-            }
+            depositX = guiLeft + (GUI_W - DEP) / 2;
+            depositY = guiTop + GUI_H + 3;
         } else {
             depositX = (int) Math.round(s.depositX * screen.width) - DEP / 2;
             depositY = (int) Math.round(s.depositY * screen.height) - DEP / 2;
@@ -248,6 +199,10 @@ public final class RemoteCraftPanel {
         if (depositBtn != null) depositBtn.setPosition(depositX, depositY);
         if (moveToggleBtn != null) moveToggleBtn.setPosition(depositX + DEP - 6, depositY - 6);
     }
+
+    /** Re-run layout + rebuild (e.g. after a position setting changed elsewhere, such as the shared
+     *  buttons-position cycle in {@link RemoteActionButtons} auto-flipping this panel's chest side). */
+    public void relayout() { layout(); rebuild(); }
 
     /** The screen this panel is attached to (used by the client to self-heal a lost panel). */
     public AbstractContainerScreen<?> screen() { return screen; }
@@ -348,22 +303,20 @@ public final class RemoteCraftPanel {
     /** Render pass (afterExtract): decorated panel, header, Qty label, chest-name headers and item icons. */
     public void render(GuiGraphicsExtractor context, int mouseX, int mouseY) {
         updateDrag(mouseX, mouseY);
-        renderChestSection(context);
-        renderButtonsSection(context);
-        renderDeposit(context);
-    }
 
-    private void renderChestSection(GuiGraphicsExtractor context) {
-        int frameTop = listTopY - 16;
-        int bx = panelX - 4, by = frameTop, bw = panelW + 8, bh = (listBottomY + 4) - by;
+        Minecraft mc = Minecraft.getInstance();
+        // Decorated FRAME only (no body fill — a fill here is drawn over the buttons and dims them).
+        int bx = panelX - 4, by = panelY - 14, bw = panelW + 8, bh = (listBottomY + 4) - by;
         context.fill(bx, by, bx + bw, by + 1, 0xFFD8A24A);                          // top accent
         context.fill(bx, by + bh - 1, bx + bw, by + bh, 0xFFD8A24A);                // bottom accent
         context.fill(bx, by, bx + 1, by + bh, 0xFF6E5430);                          // left edge
         context.fill(bx + bw - 1, by, bx + bw, by + bh, 0xFF6E5430);                // right edge
-        // Separator under the header area.
+        // Separator under the search/qty header area.
         context.fill(bx + 2, listTopY - 3, bx + bw - 2, listTopY - 2, 0x66D8A24A);
 
-        Minecraft mc = Minecraft.getInstance();
+        int reach = (int) WarehouseClient.craftReach();
+        context.text(mc.font, Component.literal("§6§lMaterials §7(" + reach + "m)"), panelX, panelY - 11, 0xFFFFFFFF);
+        context.text(mc.font, Component.literal("§7Qty:"), panelX, panelY + 19, 0xFFAAAAAA);
         // Chest-name section headers.
         for (int i = 0; i < headerDraw.size(); i++) {
             int[] xy = headerDraw.get(i);
@@ -378,17 +331,12 @@ public final class RemoteCraftPanel {
                 VisualInventoryConfigScreen.drawItemIcon(context, icon, xy[0], xy[1]);
             }
         }
-    }
-
-    private void renderButtonsSection(GuiGraphicsExtractor context) {
-        Minecraft mc = Minecraft.getInstance();
-        int reach = (int) WarehouseClient.craftReach();
-        context.text(mc.font, Component.literal("§6§lMaterials §7(" + reach + "m)"), buttonsX, buttonsY - 11, 0xFFFFFFFF);
-        context.text(mc.font, Component.literal("§7Qty:"), buttonsX, buttonsY + 19, 0xFFAAAAAA);
         // Scroll hint when there's more than fits.
         if (allRows.size() > visRows) {
-            context.text(mc.font, Component.literal("§7scroll ⬍"), buttonsX + buttonsW - 40, buttonsY + 19, 0xFF888888);
+            context.text(mc.font, Component.literal("§7scroll ⬍"), panelX + panelW - 40, panelY + 19, 0xFF888888);
         }
+
+        renderDeposit(context);
     }
 
     private void renderDeposit(GuiGraphicsExtractor context) {
