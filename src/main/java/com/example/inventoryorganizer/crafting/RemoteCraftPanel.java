@@ -181,7 +181,9 @@ public final class RemoteCraftPanel {
                     net.minecraft.client.gui.screens.recipebook.RecipeBookComponent<?> comp =
                             ((com.example.inventoryorganizer.mixin.RecipeBookScreenAccessor) rb).inorRecipeBookComponent();
                     if (comp != null && comp.isVisible()) {
-                        bookExtra = net.minecraft.client.gui.screens.recipebook.RecipeBookComponent.IMAGE_WIDTH + GAP;
+                        // +30 for the category/group tabs that stick out further left of the book's
+                        // own image — IMAGE_WIDTH alone doesn't cover them.
+                        bookExtra = net.minecraft.client.gui.screens.recipebook.RecipeBookComponent.IMAGE_WIDTH + 30 + GAP;
                     }
                 }
             } catch (Throwable ignored) {}
