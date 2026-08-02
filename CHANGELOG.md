@@ -12,6 +12,7 @@ A fast community-requested fix: the Remote Crafting panel's layout is now config
 ### Bug fixes
 - Remote-crafting deposit now properly OSTs using the chest's real configured slot rules (tier/group/specific item/`cg:` custom groups) instead of a blind first-available-slot check that ignored them entirely.
 - Fixed placement landing in the wrong slot within the correct chest — the item would land in its designated slot, then an immediate follow-up "tidy" pass would pull it back out and redrop it starting from slot 0. Placement now ranks by specificity throughout, including the final tidy — also improves the regular manual OST/warehouse sort, which shares the same placement logic.
+- Fixed chest data bleeding between different worlds/servers: known chests, per-chest profiles, and local warehouse-group links now carry a world+dimension tag (the config file is one global JSON shared across every world ever played, and previously stored bare coordinates only). Existing bindings keep working everywhere; only newly-added ones are properly scoped.
 - Fixed a duplicate OI/K/S/Wh button row briefly appearing alongside the existing one.
 - Fixed the Materials search box not moving along with the panel when its side was flipped.
 
