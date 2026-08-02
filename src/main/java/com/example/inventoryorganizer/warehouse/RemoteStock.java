@@ -196,20 +196,30 @@ public final class RemoteStock {
 
     /**
      * Deposit {@code stack} into the player's nearby chests (merge into matching stacks first, then empty
-     * slots), and SORT (OST) each chest an item actually landed in. Returns the leftover (empty if all of
-     * it fit). Same reach / foreign-link / mayInteract guards as {@link #nearbyContainers} — you can only
-     * deposit into a chest you could open by hand and that isn't another player's link.
+     * slots), and OST each chest an item actually landed in USING ITS OWN CONFIGURED SLOT RULES (routes
+     * to the matching slot / tier / group, not just a crude merge-and-alphabetise) — same real rule-based
+     * sort as {@link com.example.inventoryorganizer.WarehouseEngine#sortGroup}, just for a single chest.
+     * Returns the leftover (empty if all of it fit). Same reach / foreign-link / mayInteract guards as
+     * {@link #nearbyContainers} — you can only deposit into a chest you could open by hand and that isn't
+     * another player's link. {@code chests} carries each candidate's rules (empty list = unbound/overflow
+     * chest, unchanged behaviour: any slot accepts anything).
      */
-    public static ItemStack deposit(ServerPlayer player, ServerLevel level, List<BlockPos> chests, ItemStack stack) {
-        if (stack == null || stack.isEmpty()) return stack;
-        for (Container c : nearbyContainers(player, level, chests)) {
+    public static ItemStack deposit(ServerPlayer player, ServerLevel level, List<ChestRules> chests, ItemStack stack) {
+        if (stack == null || stack.isEmpty() || chests == null) return stack;
+        Map<BlockPos, List<String>> ruleMap = new java.util.HashMap<>();
+        List<BlockPos> positions = new ArrayList<>();
+        for (ChestRules cr : chests) {
+            if (cr.pos() == null) continue;
+            positions.add(cr.pos());
+            ruleMap.put(cr.pos(), cr.rules() != null ? cr.rules() : List.of());
+        }
+        for (Map.Entry<BlockPos, Container> e : nearbyContainersWithPos(player, level, positions)) {
             if (stack.isEmpty()) break;
             int before = stack.getCount();
-            insertInto(c, stack);
+            insertInto(e.getValue(), stack);
             if (stack.getCount() < before) {
-                // "OST" the chest it went into: merge partials + group identical items together.
-                com.example.inventoryorganizer.WarehouseEngine.sortSingleContainer(c);
-                c.setChanged();
+                com.example.inventoryorganizer.WarehouseEngine.sortGroup(player, level,
+                        List.of(new ChestRules(e.getKey(), ruleMap.getOrDefault(e.getKey(), List.of()))));
             }
         }
         return stack;
@@ -217,10 +227,11 @@ public final class RemoteStock {
 
     /**
      * Deposit {@code stack} into ONE specific chest (with the usual reach/foreign/mayInteract guards), and
-     * OST that chest. Returns the leftover (empty if it all fit). Used to return crafting ingredients to
-     * the exact chest they were pulled from.
+     * OST that chest using its own {@code rules} (empty list = unbound/overflow chest). Returns the
+     * leftover (empty if it all fit). Used to return crafting ingredients to the exact chest they were
+     * pulled from.
      */
-    public static ItemStack depositInto(ServerPlayer player, ServerLevel level, BlockPos pos, ItemStack stack) {
+    public static ItemStack depositInto(ServerPlayer player, ServerLevel level, BlockPos pos, ItemStack stack, List<String> rules) {
         if (stack == null || stack.isEmpty() || pos == null) return stack;
         double r = reach(player, level);
         if (Vec3.atCenterOf(pos).distanceToSqr(player.position()) > r * r) return stack;
@@ -237,10 +248,35 @@ public final class RemoteStock {
         int before = stack.getCount();
         insertInto(c, stack);
         if (stack.getCount() < before) {
-            com.example.inventoryorganizer.WarehouseEngine.sortSingleContainer(c);
-            c.setChanged();
+            com.example.inventoryorganizer.WarehouseEngine.sortGroup(player, level,
+                    List.of(new ChestRules(pos, rules != null ? rules : List.of())));
         }
         return stack;
+    }
+
+    /** Like {@link #nearbyContainers} but keeps each container's position (needed to look up its rules). */
+    private static List<Map.Entry<BlockPos, Container>> nearbyContainersWithPos(ServerPlayer player, ServerLevel level, List<BlockPos> chests) {
+        double r = reach(player, level);
+        double reachSqr = r * r;
+        String dim = level.dimension().identifier().toString();
+        String uuid = player.getUUID().toString();
+        List<Map.Entry<BlockPos, Container>> out = new ArrayList<>();
+        Set<BlockPos> visited = new HashSet<>();
+        for (BlockPos pos : chests) {
+            if (pos == null || visited.contains(pos)) continue;
+            visited.add(pos);
+            if (Vec3.atCenterOf(pos).distanceToSqr(player.position()) > reachSqr) continue;
+            if (WarehouseLinks.get().isForeignLinkChest(dim, pos, uuid)) continue;
+            if (!level.mayInteract(player, pos)) continue;
+            BlockPos partner = SortLogic.doubleChestPartner(level, pos);
+            if (partner != null) {
+                visited.add(partner);
+                if (WarehouseLinks.get().isForeignLinkChest(dim, partner, uuid)) continue;
+            }
+            Container c = HopperBlockEntity.getContainerAt(level, pos);
+            if (c != null) out.add(Map.entry(pos, c));
+        }
+        return out;
     }
 
     /** Merge {@code stack} into matching partials, then empty slots, in container {@code c}. Mutates stack. */

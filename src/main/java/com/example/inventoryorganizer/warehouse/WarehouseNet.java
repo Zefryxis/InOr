@@ -94,10 +94,30 @@ public final class WarehouseNet {
      */
     public static void returnBorrowedFromGrid(ServerPlayer player, ServerLevel level,
                                               java.util.List<net.minecraft.world.inventory.Slot> slots) {
+        returnBorrowedFromGrid(player, level, slots, null);
+    }
+
+    /**
+     * Same as {@link #returnBorrowedFromGrid(ServerPlayer, ServerLevel, java.util.List)}, but with the
+     * client-sent per-chest rules (see {@link CraftReturnGridPayload}) so each chest is OST'd with its
+     * OWN configured slot rules instead of a crude merge — used by the explicit "cancel recipe" action.
+     * The other, automatic call sites (recipe switch / crafting-table close) pass {@code null}: no rule
+     * data is available there, so those chests fall back to the graceful "no profile" behaviour (any
+     * slot accepts anything, then tidy) — same as before, just routed through the same rule-aware path.
+     */
+    public static void returnBorrowedFromGrid(ServerPlayer player, ServerLevel level,
+                                              java.util.List<net.minecraft.world.inventory.Slot> slots,
+                                              List<ChestRules> chestRules) {
         if (player == null || level == null || slots == null) return;
         List<Borrow> borrowed = BORROWED.remove(player.getUUID());
         if (borrowed == null || borrowed.isEmpty()) return;
         CraftCtx ctx = craftCtx(player.getUUID()); // fallback chest list if a source is gone/full
+        Map<BlockPos, List<String>> ruleMap = new java.util.HashMap<>();
+        if (chestRules != null) {
+            for (ChestRules cr : chestRules) {
+                if (cr.pos() != null) ruleMap.put(cr.pos(), cr.rules() != null ? cr.rules() : List.of());
+            }
+        }
         for (Borrow b : borrowed) {
             int need = b.count;
             for (net.minecraft.world.inventory.Slot s : slots) {
@@ -111,9 +131,12 @@ public final class WarehouseNet {
                 net.minecraft.world.item.ItemStack moved = in.copy();
                 moved.setCount(take);
                 // Source chest first; whatever doesn't fit spills to any nearby chest.
-                net.minecraft.world.item.ItemStack leftover = RemoteStock.depositInto(player, level, b.chest, moved);
+                net.minecraft.world.item.ItemStack leftover = RemoteStock.depositInto(player, level, b.chest, moved,
+                        ruleMap.getOrDefault(b.chest, List.of()));
                 if (!leftover.isEmpty() && ctx != null && !ctx.chests().isEmpty()) {
-                    leftover = RemoteStock.deposit(player, level, ctx.chests(), leftover);
+                    List<ChestRules> fallback = new ArrayList<>();
+                    for (BlockPos p : ctx.chests()) fallback.add(new ChestRules(p, ruleMap.getOrDefault(p, List.of())));
+                    leftover = RemoteStock.deposit(player, level, fallback, leftover);
                 }
                 int deposited = take - leftover.getCount();
                 if (deposited > 0) {
@@ -457,8 +480,9 @@ public final class WarehouseNet {
             level.getServer().execute(() -> {
                 try {
                     if (!(player.containerMenu instanceof net.minecraft.world.inventory.AbstractCraftingMenu menu)) return;
-                    // Same chest-borrowed-only return as the auto switch/close paths (hand-placed items stay).
-                    returnBorrowedFromGrid(player, level, menu.slots);
+                    // Same chest-borrowed-only return as the auto switch/close paths (hand-placed items stay),
+                    // but WITH the client-sent rules so each chest is OST'd using its own configured slots.
+                    returnBorrowedFromGrid(player, level, menu.slots, payload.chests());
                     menu.broadcastFullState();
                 } catch (Throwable ignored) {}
             });

@@ -298,20 +298,43 @@ public final class WarehouseClient {
         ClientPlayNetworking.send(new CraftWithdrawPayload(itemId, amount, source));
     }
 
-    /** Deposit the stack currently held on the cursor into a nearby chest (server reads the held stack). */
+    /** Deposit the stack currently held on the cursor into a nearby chest (server reads the held stack),
+     *  then OST that chest using ITS OWN configured slot rules (sent along so the server can route items
+     *  to the right slot/tier/group instead of just merging + alphabetising). */
     public static void depositCarried() {
         if (!available) return;
         List<BlockPos> near = nearbyKnownChests();
         if (near.isEmpty()) return;
-        ClientPlayNetworking.send(new CraftDepositPayload(near));
+        ClientPlayNetworking.send(new CraftDepositPayload(buildChestRules(near)));
     }
 
-    /** Cancel the recipe: send all crafting-grid ingredients back to nearby chests (each chest OST'd). */
+    /** Cancel the recipe: send all crafting-grid ingredients back to nearby chests, each OST'd using its
+     *  own configured slot rules (see {@link #depositCarried()}). */
     public static void returnGrid() {
         if (!available) return;
         List<BlockPos> near = nearbyKnownChests();
         if (near.isEmpty()) return;
-        ClientPlayNetworking.send(new CraftReturnGridPayload(near));
+        ClientPlayNetworking.send(new CraftReturnGridPayload(buildChestRules(near)));
+    }
+
+    /** Resolve each position's LOCAL per-chest profile rules (empty list = unbound/overflow chest), same
+     *  as a warehouse sort request — so the server can OST with the player's real configured rules
+     *  instead of a crude merge-and-alphabetise. */
+    private static List<ChestRules> buildChestRules(List<BlockPos> positions) {
+        com.example.inventoryorganizer.config.OrganizerConfig cfg =
+                com.example.inventoryorganizer.config.OrganizerConfig.get();
+        List<ChestRules> out = new ArrayList<>();
+        for (BlockPos p : positions) {
+            List<String> rules = new ArrayList<>();
+            com.example.inventoryorganizer.config.StoragePreset profile = cfg.findProfileFor(
+                    null, java.util.List.of(new int[]{p.getX(), p.getY(), p.getZ()}), null);
+            if (profile != null) {
+                int size = profile.getSize();
+                for (int i = 0; i < size; i++) rules.add(profile.getSlotRule(i));
+            }
+            out.add(new ChestRules(p.immutable(), rules));
+        }
+        return out;
     }
 
     public static Map<String, Integer> getCraftStock() { return new HashMap<>(craftStock); }
