@@ -262,15 +262,20 @@ public final class WarehouseEngine {
 
     /** Place a stack into a container (merge into matching stacks, then empty slots). Returns leftover.
      *  "nothing" slots are skipped. Empty slots with a specific rule that does NOT match the item are
-     *  also skipped — a pickaxe won't land in an armor chest's empty g:armor slot. */
+     *  also skipped — a pickaxe won't land in an armor chest's empty g:armor slot. Among several
+     *  ACCEPTING empty slots, the MOST SPECIFIC one wins (specific item &gt; type &gt; group &gt; "any")
+     *  — otherwise an item could land in a generic "any"/group-tagged slot elsewhere in the chest
+     *  instead of the one specifically designated for it, purely because that slot came first by index. */
     private static ItemStack placeInto(Container c, ItemStack stack, List<String> rules) {
         if (stack.isEmpty()) return stack;
         int max = Math.min(c.getMaxStackSize(), stack.getMaxStackSize());
-        // Merge into existing matching stacks (rule check not needed — item is already in that slot)
+        // Merge into existing matching stacks — but only where this item is actually allowed to sit, so
+        // a partial stack in a mismatched slot doesn't just keep absorbing more of the same item.
         for (int i = 0; i < c.getContainerSize() && !stack.isEmpty(); i++) {
             if (isNothingSlot(rules, i)) continue;
             ItemStack slot = c.getItem(i);
             if (slot.isEmpty() || slot.getCount() >= max) continue;
+            if (!slotAcceptsItem(rules, i, stack)) continue;
             if (ItemStack.isSameItemSameComponents(slot, stack) && c.canPlaceItem(i, stack)) {
                 int move = Math.min(max - slot.getCount(), stack.getCount());
                 slot.grow(move);
@@ -278,18 +283,35 @@ public final class WarehouseEngine {
                 c.setItem(i, slot);
             }
         }
-        // Place in empty slots — only where the slot's rule is "any" or matches the item
-        for (int i = 0; i < c.getContainerSize() && !stack.isEmpty(); i++) {
-            if (isNothingSlot(rules, i)) continue;
-            if (!c.getItem(i).isEmpty() || !c.canPlaceItem(i, stack)) continue;
-            if (!slotAcceptsItem(rules, i, stack)) continue;
+        // Place in empty slots — rank every accepting empty slot and fill the MOST SPECIFIC one first,
+        // one slot at a time (a multi-stack deposit should still prefer specificity for each portion).
+        while (!stack.isEmpty()) {
+            int bestSlot = -1, bestRank = Integer.MAX_VALUE;
+            for (int i = 0; i < c.getContainerSize(); i++) {
+                if (isNothingSlot(rules, i)) continue;
+                if (!c.getItem(i).isEmpty() || !c.canPlaceItem(i, stack)) continue;
+                if (!slotAcceptsItem(rules, i, stack)) continue;
+                int rank = slotRank(rules, i, stack);
+                if (rank < bestRank) { bestRank = rank; bestSlot = i; }
+            }
+            if (bestSlot < 0) break;
             int move = Math.min(max, stack.getCount());
             ItemStack put = stack.copy();
             put.setCount(move);
-            c.setItem(i, put);
+            c.setItem(bestSlot, put);
             stack.shrink(move);
         }
         return stack;
+    }
+
+    /** How specifically slot {@code slot}'s rule matches {@code stack} (lower = more specific), same
+     *  scale as {@link SortLogic#matchRank}. "any"/absent ranks as the least specific — a designated
+     *  item/type/group slot always wins over a generic slot elsewhere in the same chest. */
+    private static int slotRank(List<String> rules, int slot, ItemStack stack) {
+        if (rules == null || slot >= rules.size()) return Integer.MAX_VALUE - 1;
+        String rule = rules.get(slot);
+        if (rule == null || rule.isEmpty() || rule.equals("any")) return Integer.MAX_VALUE - 1;
+        return SortLogic.matchRank(List.of(rule), stack);
     }
 
     /** True if the slot rule is "any"/absent, or explicitly matches the item. */
