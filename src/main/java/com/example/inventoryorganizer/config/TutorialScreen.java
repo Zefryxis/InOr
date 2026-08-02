@@ -45,7 +45,7 @@ public class TutorialScreen extends Screen {
     private static final long READ_PAD_MS = 11000L;   // dwell after typing finishes (was 4800 — over 2x longer)
     private long sceneStartMs;
     private int scene = 0;
-    private static final int SCENE_COUNT = 13;
+    private static final int SCENE_COUNT = 12;
 
     // --- icon scale: drawItemIcon blits a fixed 16x16 texture, so we wrap it in a pose scale to get
     // a much more visible, "look here" sized icon instead of a tiny 16px sprite lost in empty space. ---
@@ -349,35 +349,7 @@ public class TutorialScreen extends Screen {
                 drawIcon(context, VisualInventoryConfigScreen.safeIcon(Items.WHEAT_SEEDS), cx + 24, py);
                 centeredMini(context, "§7potion rules · group ranks", cx, py + ICON_SZ + 18);
             }
-            case 11 -> { // Quick-reference table: rank order -> which criterion actually decided ->
-                        // winner, covering all three possible "first" criteria, plus a note on the
-                        // cascade rule and a bundle-pairing footnote — almost the whole scene is table.
-                int tx = stageX + 10, ty = stageY + 14;
-                int col1 = Math.min(stageW * 42 / 100, 175);
-                int col2 = Math.min(stageW * 27 / 100, 95);
-                GuiTextScale.text(context, font, Component.literal("§6Rank order"), tx, ty, 0xFFFFAA00);
-                GuiTextScale.text(context, font, Component.literal("§6Decided by"), tx + col1, ty, 0xFFFFAA00);
-                GuiTextScale.text(context, font, Component.literal("§6Wins"), tx + col1 + col2, ty, 0xFFFFAA00);
-                ty += 11;
-                context.horizontalLine(tx, tx + col1 + col2 + 55, ty - 3, 0xFF444455);
-                ty += 5;
-                drawTableRow3(context, tx, col1, col2, ty, "Material›Enchant›Durability", "§7Material", "§fNetherite");
-                ty += 13;
-                drawTableRow3(context, tx, col1, col2, ty, "Enchant›Material›Durability", "§7Enchant", "§fDiamond");
-                ty += 13;
-                drawTableRow3(context, tx, col1, col2, ty, "Durability›Material›Enchant", "§7Durability", "§fDiamond");
-                ty += 20;
-                centeredMini(context, "§7A criterion only decides when the ones above it are tied -",
-                        cx, ty);
-                centeredMini(context, "§7otherwise a higher-ranked one already settled it",
-                        cx, ty + 11);
-                ty += 24;
-                centeredMini(context, "§7Bundles work the same way: best content match first,",
-                        cx, ty);
-                centeredMini(context, "§7then any leftover profiles pair with empty bundles in list order",
-                        cx, ty + 11);
-            }
-            case 12 -> { // Closing
+            case 11 -> { // Closing
                 drawIcon(context, VisualInventoryConfigScreen.safeIcon(Items.NETHER_STAR), cx - ICON_SZ / 2, cy - ICON_SZ - 6);
                 centeredMini(context, "§7Have fun!", cx, cy + 14);
             }
@@ -524,22 +496,6 @@ public class TutorialScreen extends Screen {
     /** A Sort Priority list row, in the exact plain-white style SortingOrderConfigScreen draws them. */
     private void drawPriorityRow(GuiGraphicsExtractor context, int x, int y, String label) {
         GuiTextScale.text(context, font, Component.literal(label), x + 4, y, 0xFFFFFFFF);
-    }
-
-    /** One row of the quick-reference table in scene 11: a plain white left column (rank order) and
-     *  a right column that already carries its own colour codes (winner + reason in grey). */
-    private void drawTableRow(GuiGraphicsExtractor context, int x, int col2, int y, String left, String right) {
-        GuiTextScale.text(context, font, Component.literal("§f" + left), x, y, 0xFFE8E8F0);
-        GuiTextScale.text(context, font, Component.literal(right), x + col2, y, 0xFFFFFFFF);
-    }
-
-    /** Three-column row for the quick-reference table (scene 11): rank order, which criterion actually
-     *  decided that scenario, and the resulting winner. */
-    private void drawTableRow3(GuiGraphicsExtractor context, int x, int col1, int col2, int y,
-                               String order, String decidedBy, String winner) {
-        GuiTextScale.text(context, font, Component.literal("§f" + order), x, y, 0xFFE8E8F0);
-        GuiTextScale.text(context, font, Component.literal(decidedBy), x + col1, y, 0xFFFFFFFF);
-        GuiTextScale.text(context, font, Component.literal(winner), x + col1 + col2, y, 0xFFFFFFFF);
     }
 
     private void drawLink(GuiGraphicsExtractor context, int x1, int y, int x2, int y2) {
