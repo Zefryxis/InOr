@@ -195,41 +195,31 @@ public final class RemoteStock {
     }
 
     /**
-     * Deposit {@code stack} into the player's nearby chests (merge into matching stacks first, then empty
-     * slots), and OST each chest an item actually landed in USING ITS OWN CONFIGURED SLOT RULES (routes
-     * to the matching slot / tier / group, not just a crude merge-and-alphabetise) — same real rule-based
-     * sort as {@link com.example.inventoryorganizer.WarehouseEngine#sortGroup}, just for a single chest.
-     * Returns the leftover (empty if all of it fit). Same reach / foreign-link / mayInteract guards as
-     * {@link #nearbyContainers} — you can only deposit into a chest you could open by hand and that isn't
-     * another player's link. {@code chests} carries each candidate's rules (empty list = unbound/overflow
-     * chest, unchanged behaviour: any slot accepts anything).
+     * Deposit {@code stack} into the player's nearby chests, ROUTING it to the best-matching chest by
+     * each candidate's configured slot rules (specific item &gt; type &gt; group, else the overflow
+     * chest — same ranking {@link com.example.inventoryorganizer.WarehouseEngine#sortGroup} uses),
+     * placing it only in a rule-accepting slot, and spilling to another chest only if the target is
+     * full. Returns the leftover (empty if all of it fit). Same reach / foreign-link / mayInteract
+     * guards as {@link #nearbyContainers} — you can only deposit into a chest you could open by hand
+     * and that isn't another player's link. {@code chests} carries each candidate's rules (empty list =
+     * unbound/overflow chest: any slot accepts anything, same as before this was rule-aware).
      */
     public static ItemStack deposit(ServerPlayer player, ServerLevel level, List<ChestRules> chests, ItemStack stack) {
         if (stack == null || stack.isEmpty() || chests == null) return stack;
-        Map<BlockPos, List<String>> ruleMap = new java.util.HashMap<>();
         List<BlockPos> positions = new ArrayList<>();
-        for (ChestRules cr : chests) {
-            if (cr.pos() == null) continue;
-            positions.add(cr.pos());
-            ruleMap.put(cr.pos(), cr.rules() != null ? cr.rules() : List.of());
-        }
+        for (ChestRules cr : chests) if (cr.pos() != null) positions.add(cr.pos());
+        Map<BlockPos, Container> containers = new java.util.HashMap<>();
         for (Map.Entry<BlockPos, Container> e : nearbyContainersWithPos(player, level, positions)) {
-            if (stack.isEmpty()) break;
-            int before = stack.getCount();
-            insertInto(e.getValue(), stack);
-            if (stack.getCount() < before) {
-                com.example.inventoryorganizer.WarehouseEngine.sortGroup(player, level,
-                        List.of(new ChestRules(e.getKey(), ruleMap.getOrDefault(e.getKey(), List.of()))));
-            }
+            containers.put(e.getKey(), e.getValue());
         }
-        return stack;
+        return com.example.inventoryorganizer.WarehouseEngine.depositStack(player, chests, containers, stack);
     }
 
     /**
-     * Deposit {@code stack} into ONE specific chest (with the usual reach/foreign/mayInteract guards), and
-     * OST that chest using its own {@code rules} (empty list = unbound/overflow chest). Returns the
-     * leftover (empty if it all fit). Used to return crafting ingredients to the exact chest they were
-     * pulled from.
+     * Deposit {@code stack} into ONE specific chest (with the usual reach/foreign/mayInteract guards),
+     * placing it only in a slot its {@code rules} accept (empty list = unbound/overflow chest: any slot
+     * accepts anything) and tidying the chest afterward if anything landed. Returns the leftover (empty
+     * if it all fit). Used to return crafting ingredients to the exact chest they were pulled from.
      */
     public static ItemStack depositInto(ServerPlayer player, ServerLevel level, BlockPos pos, ItemStack stack, List<String> rules) {
         if (stack == null || stack.isEmpty() || pos == null) return stack;
@@ -245,13 +235,9 @@ public final class RemoteStock {
         if (partner != null && WarehouseLinks.get().isForeignLinkChest(dim, partner, uuid)) return stack;
         Container c = HopperBlockEntity.getContainerAt(level, pos);
         if (c == null) return stack;
-        int before = stack.getCount();
-        insertInto(c, stack);
-        if (stack.getCount() < before) {
-            com.example.inventoryorganizer.WarehouseEngine.sortGroup(player, level,
-                    List.of(new ChestRules(pos, rules != null ? rules : List.of())));
-        }
-        return stack;
+        return com.example.inventoryorganizer.WarehouseEngine.depositStack(player,
+                List.of(new ChestRules(pos, rules != null ? rules : List.of())),
+                Map.of(pos, c), stack);
     }
 
     /** Like {@link #nearbyContainers} but keeps each container's position (needed to look up its rules). */
@@ -279,24 +265,6 @@ public final class RemoteStock {
         return out;
     }
 
-    /** Merge {@code stack} into matching partials, then empty slots, in container {@code c}. Mutates stack. */
-    private static void insertInto(Container c, ItemStack stack) {
-        int max = Math.min(c.getMaxStackSize(), stack.getMaxStackSize());
-        for (int i = 0; i < c.getContainerSize() && !stack.isEmpty(); i++) {
-            ItemStack slot = c.getItem(i);
-            if (slot.isEmpty() || slot.getCount() >= max) continue;
-            if (ItemStack.isSameItemSameComponents(slot, stack) && c.canPlaceItem(i, stack)) {
-                int move = Math.min(max - slot.getCount(), stack.getCount());
-                slot.grow(move); stack.shrink(move); c.setItem(i, slot);
-            }
-        }
-        for (int i = 0; i < c.getContainerSize() && !stack.isEmpty(); i++) {
-            if (!c.getItem(i).isEmpty() || !c.canPlaceItem(i, stack)) continue;
-            int move = Math.min(max, stack.getCount());
-            ItemStack put = stack.copy(); put.setCount(move);
-            c.setItem(i, put); stack.shrink(move);
-        }
-    }
 
     static Item itemFromId(String id) {
         Identifier rid = Identifier.tryParse(id);

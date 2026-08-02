@@ -153,6 +153,57 @@ public final class WarehouseEngine {
     /** Public single-chest sort (used by remote-crafting deposit): merge partials + group items by id. */
     public static void sortSingleContainer(Container c) { tidyContainer(c, null); }
 
+    /**
+     * Route a single stack into the BEST-MATCHING chest among {@code chests} (same ranking as
+     * {@link #sortGroup}: specific item &gt; type &gt; group, else the overflow chest), respecting each
+     * slot's rule when placing it, and spilling to any other chest with room if the target is full.
+     * Only the chest(s) an item actually landed in are tidied afterward. Returns the leftover (empty if
+     * it all fit).
+     *
+     * <p>Used by remote-crafting deposit ({@link com.example.inventoryorganizer.warehouse.RemoteStock}),
+     * which resolves reach/foreign-link/mayInteract guards and hands over the already-validated
+     * container for each candidate position. This is the single-stack counterpart to {@link #sortGroup},
+     * which redistributes EVERY item already in the group; this only places the ONE new stack, so it
+     * never disturbs items the player already organized elsewhere.
+     */
+    public static ItemStack depositStack(ServerPlayer player, List<com.example.inventoryorganizer.warehouse.ChestRules> chests,
+                                          Map<BlockPos, Container> containers, ItemStack stack) {
+        if (stack == null || stack.isEmpty() || chests == null || chests.isEmpty() || containers == null) return stack;
+        List<Unit> units = new ArrayList<>();
+        for (com.example.inventoryorganizer.warehouse.ChestRules cr : chests) {
+            Container c = containers.get(cr.pos());
+            if (c != null) units.add(new Unit(cr.pos(), c, cr.rules() != null ? cr.rules() : List.of()));
+        }
+        if (units.isEmpty()) return stack;
+
+        if (player != null) SortLogic.setActiveGroups(
+                com.example.inventoryorganizer.warehouse.WarehouseNet.playerGroups(player.getUUID()));
+        try {
+            Set<Unit> touched = new HashSet<>();
+            ItemStack remaining = stack;
+            Unit target = pickTarget(units, remaining);
+            if (target != null) {
+                int before = remaining.getCount();
+                remaining = placeInto(target.container(), remaining, target.rules());
+                if (remaining.getCount() < before) touched.add(target);
+            }
+            for (Unit u : units) {
+                if (remaining.isEmpty()) break;
+                if (u == target) continue;
+                int before = remaining.getCount();
+                remaining = placeInto(u.container(), remaining, u.rules());
+                if (remaining.getCount() < before) touched.add(u);
+            }
+            for (Unit u : touched) {
+                tidyContainer(u.container(), u.rules());
+                u.container().setChanged();
+            }
+            return remaining;
+        } finally {
+            SortLogic.clearActiveGroups();
+        }
+    }
+
     private static void tidyContainer(Container c, List<String> rules) {
         List<ItemStack> items = new ArrayList<>();
         for (int i = 0; i < c.getContainerSize(); i++) {
