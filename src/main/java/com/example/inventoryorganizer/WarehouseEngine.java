@@ -183,6 +183,10 @@ public final class WarehouseEngine {
             ItemStack remaining = stack;
             Unit target = pickTarget(units, remaining);
             if (target != null) {
+                LOGGER.info("[Warehouse] depositStack: item={} target={} targetRules={}",
+                        SortLogic.getItemId(stack), target.pos(), target.rules());
+            }
+            if (target != null) {
                 int before = remaining.getCount();
                 remaining = placeInto(target.container(), remaining, target.rules());
                 if (remaining.getCount() < before) touched.add(target);
@@ -295,6 +299,9 @@ public final class WarehouseEngine {
                 if (rank < bestRank) { bestRank = rank; bestSlot = i; }
             }
             if (bestSlot < 0) break;
+            LOGGER.info("[Warehouse] placeInto: item={} -> slot {} (rank {}) rule={} containerSize={}",
+                    SortLogic.getItemId(stack), bestSlot, bestRank,
+                    rules != null && bestSlot < rules.size() ? rules.get(bestSlot) : "any", c.getContainerSize());
             int move = Math.min(max, stack.getCount());
             ItemStack put = stack.copy();
             put.setCount(move);
