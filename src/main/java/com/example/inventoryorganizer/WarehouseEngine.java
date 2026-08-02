@@ -146,14 +146,6 @@ public final class WarehouseEngine {
     }
 
     /**
-     * Re-lay a single container compactly: pull everything out, merge same item+components into full
-     * stacks, sort by item id so identical items sit next to each other, and write the result back from
-     * slot 0. Pure server-side container manipulation — no packets, no desync.
-     */
-    /** Public single-chest sort (used by remote-crafting deposit): merge partials + group items by id. */
-    public static void sortSingleContainer(Container c) { tidyContainer(c, null); }
-
-    /**
      * Route a single stack into the BEST-MATCHING chest among {@code chests} (same ranking as
      * {@link #sortGroup}: specific item &gt; type &gt; group, else the overflow chest), respecting each
      * slot's rule when placing it, and spilling to any other chest with room if the target is full.
@@ -208,6 +200,15 @@ public final class WarehouseEngine {
         }
     }
 
+    /**
+     * Re-lay a container compactly WITHOUT breaking per-slot rule specificity: pulls everything out,
+     * merges same item+components into full stacks, then places each merged stack back via the same
+     * best-slot ranking {@link #placeInto} uses (specific item &gt; type &gt; group &gt; any) — NOT a
+     * blind "starting from slot 0" fill. That naive fill used to silently UNDO correct rule-based
+     * placement done just beforehand (by {@link #sortGroup} or {@link #depositStack}): the item would
+     * land in its designated slot first, then this tidy pass would immediately pull it back out and
+     * re-drop it starting at slot 0, ignoring the rule entirely.
+     */
     private static void tidyContainer(Container c, List<String> rules) {
         List<ItemStack> items = new ArrayList<>();
         for (int i = 0; i < c.getContainerSize(); i++) {
@@ -229,14 +230,12 @@ public final class WarehouseEngine {
             }
             if (!s.isEmpty()) merged.add(s);
         }
-        // Group identical items together (sort by registry id).
+        // Group identical items together (sort by registry id) — this only decides placement ORDER
+        // among ties; the actual slot each one gets still comes from placeInto's specificity ranking.
         merged.sort(java.util.Comparator.comparing(st ->
                 net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(st.getItem()).toString()));
-        int idx = 0;
         for (ItemStack s : merged) {
-            while (idx < c.getContainerSize() && isNothingSlot(rules, idx)) idx++; // skip "nothing" slots
-            if (idx >= c.getContainerSize()) break;
-            c.setItem(idx++, s);
+            placeInto(c, s, rules); // container was just fully emptied, so this always fits
         }
     }
 
