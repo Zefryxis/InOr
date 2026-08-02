@@ -97,11 +97,7 @@ public class WarehouseMapScreen extends Screen {
         int x = p.getX(), y = p.getY(), z = p.getZ();
         for (com.example.inventoryorganizer.config.StoragePreset sp : cfg.getStoragePresets()) {
             if (sp.isDefault()) continue;
-            java.util.List<int[]> pos = sp.getPositions();
-            if (pos == null) continue;
-            for (int[] q : pos) {
-                if (q.length == 3 && q[0] == x && q[1] == y && q[2] == z) return true; // has a bound profile
-            }
+            if (sp.matchesPosition(x, y, z, 0)) return true; // has a bound profile IN THIS WORLD
         }
         if (cfg.findWarehouseGroupFor(x, y, z) != null) return true;   // in a local link
         if (WarehouseClient.isOwnLinkChest(p)) return true;            // server says it's our link
@@ -131,17 +127,23 @@ public class WarehouseMapScreen extends Screen {
         // only removed from the map when you remove its profile or unlink it — never automatically just
         // because its chunk happens to be loaded and momentarily out of sync.
         LinkedHashSet<BlockPos> known = new LinkedHashSet<>();
-        // (a) every non-default profile's bound position(s)
+        // (a) every non-default profile's bound position(s) — matchesPosition() (not a raw scan of the
+        // stored positions) so a binding recorded in a DIFFERENT world/server (same global config file)
+        // doesn't show up on this world's map.
         for (com.example.inventoryorganizer.config.StoragePreset sp : cfg.getStoragePresets()) {
             if (sp.isDefault() || sp.getPositions() == null) continue;
             for (int[] q : sp.getPositions()) {
-                if (q.length == 3 && !cfg.isNothingChest(q[0], q[1], q[2])) known.add(new BlockPos(q[0], q[1], q[2]));
+                if (q.length == 3 && sp.matchesPosition(q[0], q[1], q[2], 0) && !cfg.isNothingChest(q[0], q[1], q[2])) {
+                    known.add(new BlockPos(q[0], q[1], q[2]));
+                }
             }
         }
-        // (b) every linked chest (local warehouse groups)
+        // (b) every linked chest (local warehouse groups) — same world-scoped contains() check.
         for (WarehouseGroup g : groups) {
             for (int[] q : g.getPositions()) {
-                if (q.length == 3 && !cfg.isNothingChest(q[0], q[1], q[2])) known.add(new BlockPos(q[0], q[1], q[2]));
+                if (q.length == 3 && g.contains(q[0], q[1], q[2]) && !cfg.isNothingChest(q[0], q[1], q[2])) {
+                    known.add(new BlockPos(q[0], q[1], q[2]));
+                }
             }
         }
         // (c) any other opened chest the server marks as a link (own/foreign-revealed)

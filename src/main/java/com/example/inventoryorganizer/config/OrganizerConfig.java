@@ -67,6 +67,18 @@ public class OrganizerConfig {
     // icon. They appear on the warehouse map with a ring marker (○) instead of a chest glyph.
     private List<int[]> genericChests = new ArrayList<>();
 
+    // World/dimension key PARALLEL to each list above (same index), added because this whole config
+    // file is a SINGLE GLOBAL JSON shared across every world and server the player has ever played on
+    // — without this, a chest at the same (x,y,z) in two different worlds/servers was indistinguishable.
+    // NEW fields (not renaming the ones above) so existing configs still parse exactly as before — a
+    // list shorter than its position list (or entirely absent, on an old config) means those entries
+    // predate this feature and are treated as a WILDCARD (match in any world) rather than force-
+    // reassigning them to whichever world happens to be open first after updating, which could silently
+    // "lose" a binding the player still uses on a different world/server.
+    private List<String> knownChestWorlds = new ArrayList<>();
+    private List<String> nothingChestWorlds = new ArrayList<>();
+    private List<String> genericChestWorlds = new ArrayList<>();
+
     // Configurable HUD overlay: per-element visibility + fractional screen position. All off by default.
     private HudSettings hud = new HudSettings();
 
@@ -836,9 +848,8 @@ public class OrganizerConfig {
         if (pos != null) {
             for (int[] q : pos) {
                 if (q.length == 3) {
-                    final int x = q[0], y = q[1], z = q[2];
-                    getKnownChests().removeIf(a -> a.length == 3 && a[0] == x && a[1] == y && a[2] == z);
-                    detachFromGroups(x, y, z);
+                    removeMatchingPos(getKnownChests(), getKnownChestWorlds(), q[0], q[1], q[2]);
+                    detachFromGroups(q[0], q[1], q[2]);
                 }
             }
         }
@@ -970,25 +981,87 @@ public class OrganizerConfig {
         return nothingChests;
     }
 
-    private static boolean posListContains(List<int[]> list, int x, int y, int z) {
-        for (int[] p : list) if (p.length == 3 && p[0] == x && p[1] == y && p[2] == z) return true;
+    public List<String> getKnownChestWorlds() {
+        if (knownChestWorlds == null) knownChestWorlds = new ArrayList<>();
+        return knownChestWorlds;
+    }
+
+    public List<String> getNothingChestWorlds() {
+        if (nothingChestWorlds == null) nothingChestWorlds = new ArrayList<>();
+        return nothingChestWorlds;
+    }
+
+    public List<String> getGenericChestWorlds() {
+        if (genericChestWorlds == null) genericChestWorlds = new ArrayList<>();
+        return genericChestWorlds;
+    }
+
+    /** The world/dimension key at index {@code i}, or null if that entry predates world-scoping
+     *  (the parallel list is shorter than the position list) — treated as a WILDCARD (any world). */
+    private static String worldTagAt(List<String> worlds, int i) {
+        return (worlds != null && i < worlds.size() && worlds.get(i) != null && !worlds.get(i).isEmpty())
+                ? worlds.get(i) : null;
+    }
+
+    /** The current world/server + dimension key, or null if it can't be determined (e.g. no world
+     *  loaded yet) — callers treat null the same as "don't filter by world" for safety. */
+    private static String currentWorldKey() {
+        try {
+            return com.example.inventoryorganizer.WorldScope.key(net.minecraft.client.Minecraft.getInstance().level);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** True if {@code x,y,z} is in {@code list}, matching the CURRENT world unless the entry is a
+     *  legacy (pre-world-scoping) wildcard, or the current world can't be determined. */
+    private static boolean posListContains(List<int[]> list, List<String> worlds, int x, int y, int z) {
+        String current = currentWorldKey();
+        for (int i = 0; i < list.size(); i++) {
+            int[] p = list.get(i);
+            if (p.length != 3 || p[0] != x || p[1] != y || p[2] != z) continue;
+            String tag = worldTagAt(worlds, i);
+            if (tag == null || current == null || tag.equals(current)) return true;
+        }
         return false;
     }
 
-    public boolean isNothingChest(int x, int y, int z) { return posListContains(getNothingChests(), x, y, z); }
+    /** Remove every entry at {@code x,y,z} from {@code list} (any world) — keeps the parallel world-tag
+     *  list in sync by index. Matches ALL worlds (not just the current one) since "Nothing"-ing or
+     *  reclassifying a position is a deliberate per-coordinate action, same scope as before this
+     *  feature existed. */
+    private static void removeMatchingPos(List<int[]> list, List<String> worlds, int x, int y, int z) {
+        for (int i = list.size() - 1; i >= 0; i--) {
+            int[] p = list.get(i);
+            if (p.length == 3 && p[0] == x && p[1] == y && p[2] == z) {
+                list.remove(i);
+                if (worlds != null && i < worlds.size()) worlds.remove(i);
+            }
+        }
+    }
+
+    public boolean isNothingChest(int x, int y, int z) {
+        return posListContains(getNothingChests(), getNothingChestWorlds(), x, y, z);
+    }
 
     /** Record a chest the player has opened (shown on the map). Returns true if newly added. */
     public boolean addKnownChest(int x, int y, int z) {
-        if (isNothingChest(x, y, z) || posListContains(getKnownChests(), x, y, z)) return false;
+        if (isNothingChest(x, y, z) || posListContains(getKnownChests(), getKnownChestWorlds(), x, y, z)) return false;
         getKnownChests().add(new int[]{x, y, z});
+        String w = currentWorldKey();
+        getKnownChestWorlds().add(w != null ? w : "");
         return true;
     }
 
     /** Mark a chest as "Nothing": hide it from the map, forget it as known, and unlink it. */
     public void markNothingChest(int x, int y, int z) {
-        if (!isNothingChest(x, y, z)) getNothingChests().add(new int[]{x, y, z});
-        getKnownChests().removeIf(p -> p.length == 3 && p[0] == x && p[1] == y && p[2] == z);
-        getGenericChests().removeIf(p -> p.length == 3 && p[0] == x && p[1] == y && p[2] == z);
+        if (!isNothingChest(x, y, z)) {
+            getNothingChests().add(new int[]{x, y, z});
+            String w = currentWorldKey();
+            getNothingChestWorlds().add(w != null ? w : "");
+        }
+        removeMatchingPos(getKnownChests(), getKnownChestWorlds(), x, y, z);
+        removeMatchingPos(getGenericChests(), getGenericChestWorlds(), x, y, z);
         detachFromGroups(x, y, z);
     }
 
@@ -999,12 +1072,16 @@ public class OrganizerConfig {
         return genericChests;
     }
 
-    public boolean isGenericChest(int x, int y, int z) { return posListContains(getGenericChests(), x, y, z); }
+    public boolean isGenericChest(int x, int y, int z) {
+        return posListContains(getGenericChests(), getGenericChestWorlds(), x, y, z);
+    }
 
     /** Mark a chest position as a generic (unidentified) container. Returns true if newly added. */
     public boolean addGenericChest(int x, int y, int z) {
         if (isGenericChest(x, y, z)) return false;
         getGenericChests().add(new int[]{x, y, z});
+        String w = currentWorldKey();
+        getGenericChestWorlds().add(w != null ? w : "");
         return true;
     }
 
@@ -1170,6 +1247,9 @@ public class OrganizerConfig {
         if (o.knownChests != null) this.knownChests = o.knownChests;
         if (o.nothingChests != null) this.nothingChests = o.nothingChests;
         if (o.genericChests != null) this.genericChests = o.genericChests;
+        if (o.knownChestWorlds != null) this.knownChestWorlds = o.knownChestWorlds;
+        if (o.nothingChestWorlds != null) this.nothingChestWorlds = o.nothingChestWorlds;
+        if (o.genericChestWorlds != null) this.genericChestWorlds = o.genericChestWorlds;
         if (o.hud != null) this.hud = o.hud;
         if (o.remoteCraftHud != null) this.remoteCraftHud = o.remoteCraftHud;
         this.craftPreferChests = o.craftPreferChests;

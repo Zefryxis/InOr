@@ -36,6 +36,12 @@ public class StoragePreset {
     private String customName = null;     // anvil custom name this profile is bound to (match key)
     private String signText = null;       // text of an adjacent sign this profile is bound to (match key)
     private List<int[]> positions = null; // chest BlockPos(es) this profile is bound to ([x,y,z])
+    // World/dimension key PARALLEL to `positions` (same index) — see OrganizerConfig's matching fields
+    // for why this exists: the config is one global file shared across every world/server ever played,
+    // so a bare x,y,z is ambiguous once you've bound profiles in more than one world. A missing/short
+    // entry (pre-existing configs) means that position predates this feature and is treated as a
+    // WILDCARD (matches in any world) rather than being force-assigned to a single world.
+    private List<String> positionWorlds = null;
     private String shulkerId = null;      // mod-assigned UUID for shulker boxes (survives break/place)
 
     public StoragePreset() {
@@ -125,19 +131,47 @@ public class StoragePreset {
         return positions;
     }
 
-    public void setPositions(List<int[]> positions) { this.positions = positions; }
+    public List<String> getPositionWorlds() {
+        if (positionWorlds == null) positionWorlds = new ArrayList<>();
+        return positionWorlds;
+    }
+
+    /** Replace the whole position list (e.g. re-pointing a name-matched profile after relocation).
+     *  All entries are tagged with the CURRENT world, since this always runs while an actual chest in
+     *  an actual world was just interacted with. */
+    public void setPositions(List<int[]> positions) {
+        this.positions = positions;
+        String w;
+        try {
+            w = com.example.inventoryorganizer.WorldScope.key(net.minecraft.client.Minecraft.getInstance().level);
+        } catch (Throwable t) {
+            w = null;
+        }
+        List<String> worlds = new ArrayList<>();
+        if (positions != null) for (int i = 0; i < positions.size(); i++) worlds.add(w != null ? w : "");
+        this.positionWorlds = worlds;
+    }
 
     public void clearPositions() {
         if (positions != null) positions.clear();
+        if (positionWorlds != null) positionWorlds.clear();
     }
 
-    /** Bind this profile to a block position (deduplicated). Used when first attaching to a chest. */
+    /** Bind this profile to a block position (deduplicated) in the CURRENT world/dimension. Used when
+     *  first attaching to a chest. */
     public void addPosition(int x, int y, int z) {
         List<int[]> list = getPositions();
         for (int[] p : list) {
             if (p.length == 3 && p[0] == x && p[1] == y && p[2] == z) return;
         }
         list.add(new int[]{x, y, z});
+        String w;
+        try {
+            w = com.example.inventoryorganizer.WorldScope.key(net.minecraft.client.Minecraft.getInstance().level);
+        } catch (Throwable t) {
+            w = null;
+        }
+        getPositionWorlds().add(w != null ? w : "");
     }
 
     public String getShulkerId() { return shulkerId; }
@@ -163,15 +197,29 @@ public class StoragePreset {
         return customName != null && !customName.isEmpty() && customName.equals(chestCustomName);
     }
 
-    /** Match by coordinates within {@code tolerance} blocks on each axis (covers single↔double conversion). */
+    /** Match by coordinates within {@code tolerance} blocks on each axis (covers single↔double conversion),
+     *  restricted to the CURRENT world/dimension unless that position predates world-scoping (wildcard)
+     *  or the current world can't be determined. Without this, the same coordinates in two different
+     *  worlds/servers (the whole config is one global file) would match a profile that isn't actually
+     *  there. */
     public boolean matchesPosition(int x, int y, int z, int tolerance) {
         if (positions == null) return false;
-        for (int[] p : positions) {
+        String current;
+        try {
+            current = com.example.inventoryorganizer.WorldScope.key(net.minecraft.client.Minecraft.getInstance().level);
+        } catch (Throwable t) {
+            current = null;
+        }
+        List<String> worlds = positionWorlds;
+        for (int i = 0; i < positions.size(); i++) {
+            int[] p = positions.get(i);
             if (p.length != 3) continue;
             if (Math.abs(p[0] - x) <= tolerance
                     && Math.abs(p[1] - y) <= tolerance
                     && Math.abs(p[2] - z) <= tolerance) {
-                return true;
+                String tag = (worlds != null && i < worlds.size() && worlds.get(i) != null && !worlds.get(i).isEmpty())
+                        ? worlds.get(i) : null;
+                if (tag == null || current == null || tag.equals(current)) return true;
             }
         }
         return false;
