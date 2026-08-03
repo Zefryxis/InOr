@@ -16,7 +16,8 @@ A fast community-requested fix: the Remote Crafting panel's layout is now config
 - Fixed a duplicate OI/K/S/Wh button row briefly appearing alongside the existing one.
 - Fixed the Materials search box not moving along with the panel when its side was flipped.
 - Scroll-to-move now only acts while the cursor is over the container's own panel — reported in [#5](https://github.com/Zefryxis/InOr/issues/5), scrolling anywhere on screen (including mid-trade or mid-craft) could move hotbar/inventory items. Villager trading screens are excluded entirely, crafting/furnace/trading result slots can't be scrolled away, and a Scroll-move on/off toggle was added in Special Settings.
-- Fixed overlapping buttons/text across the mod's screens at GUI Scale 3+ (also from #5) — every mod screen now counter-zooms past GUI Scale 2 instead of reflowing, so it always keeps at least as much layout room as GUI Scale 2 provides.
+- Fixed overlapping buttons/text across the mod's screens at GUI Scale 3+ (also from #5) — every mod screen now counter-zooms past GUI Scale 2 instead of reflowing, so it always keeps at least as much layout room as GUI Scale 2 provides. Scale 3 only counter-zooms halfway (to an effective 2.5), since some players use scale 3 on purpose to see more detail; scale 4+ still gets the full treatment.
+- Fixed the Kits screen getting confined to the top-left corner of the screen after a window resize or live GUI Scale change at scale 3+ (it rebuilt at the wrong size on resize while the counter-zoom shrink still applied for the larger virtual size).
 
 ## 1.6.1 — 26.2
 
