@@ -103,6 +103,9 @@ public class CustomGroupListScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        // Counter-zoom (see GuiScaleCap) — see CustomGroupEditorScreen for the rationale.
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
         // Persist the search box across rebuilds: create it once, then re-add the SAME instance in
         // rebuildButtons() (which clears all widgets). Re-adding keeps its text, cursor and focus.
         if (searchField == null) {
@@ -207,6 +210,13 @@ public class CustomGroupListScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) {
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(guiScaleCapF);
+        }
         super.extractRenderState(context, mouseX, mouseY, delta);
 
         context.centeredText(font, Component.literal("Item Groups"), width / 2, 8, 0xFFFFFFFF);
@@ -241,10 +251,38 @@ public class CustomGroupListScreen extends Screen {
             // Re-render nameField on top of fill (was covered by fill after super.render)
             nameField.extractRenderState(context, mouseX, mouseY, delta);
         }
+
+        if (guiScaleCapF != 1f) context.pose().popMatrix();
+    }
+
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space (see GuiScaleCap / init()). */
+    private net.minecraft.client.input.MouseButtonEvent toVirtual(net.minecraft.client.input.MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new net.minecraft.client.input.MouseButtonEvent(
+                GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
+    }
+
+    @Override
+    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean bl) {
+        return super.mouseClicked(toVirtual(click), bl);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
+        return super.mouseReleased(toVirtual(click));
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double dragX, double dragY) {
+        float f = GuiScaleCap.renderFactor();
+        double s = f == 1f ? 1.0 : (1.0 / f);
+        return super.mouseDragged(toVirtual(click), dragX * s, dragY * s);
     }
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        mouseX = GuiScaleCap.mx(mouseX);
+        mouseY = GuiScaleCap.my(mouseY);
         if (!showNameInput) {
             int total = buildRows().size();
             int maxScroll = Math.max(0, total - rowsVisible());

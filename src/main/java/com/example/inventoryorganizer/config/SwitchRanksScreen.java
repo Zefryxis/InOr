@@ -37,6 +37,8 @@ public class SwitchRanksScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
         int x = width / 2 - 150;
         int y = 44;
 
@@ -72,11 +74,44 @@ public class SwitchRanksScreen extends Screen {
         return Component.translatable("inventory-organizer.switch.air").append(Component.literal(": §e")).append(Component.translatable(key));
     }
 
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space (see GuiScaleCap / init()). */
+    private net.minecraft.client.input.MouseButtonEvent toVirtual(net.minecraft.client.input.MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new net.minecraft.client.input.MouseButtonEvent(
+                GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
+    }
+
+    @Override
+    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean bl) {
+        return super.mouseClicked(toVirtual(click), bl);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
+        return super.mouseReleased(toVirtual(click));
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double dragX, double dragY) {
+        float f = GuiScaleCap.renderFactor();
+        double s = f == 1f ? 1.0 : (1.0 / f);
+        return super.mouseDragged(toVirtual(click), dragX * s, dragY * s);
+    }
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) {
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(guiScaleCapF);
+        }
         super.extractRenderState(context, mouseX, mouseY, delta);
         context.centeredText(font, Component.translatable("inventory-organizer.switch.setup_title"), width / 2, 10, 0xFFFFFF55);
         context.centeredText(font, Component.translatable("inventory-organizer.switch.groups_hint"), width / 2, 28, 0xFFAAAAAA);
+
+        if (guiScaleCapF != 1f) context.pose().popMatrix();
     }
 
     @Override

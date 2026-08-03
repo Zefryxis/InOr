@@ -408,6 +408,8 @@ public class SortingOrderConfigScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
 
         // Dynamic slot size: scale down if screen is too narrow
         int minPanelW = 140;
@@ -491,6 +493,13 @@ public class SortingOrderConfigScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) {
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(guiScaleCapF);
+        }
         super.extractRenderState(context, mouseX, mouseY, delta);
 
         // Draw decorated background panel for grid
@@ -524,6 +533,8 @@ public class SortingOrderConfigScreen extends Screen {
 
         // Guide overlay (drawn last, on top)
         if (OrganizerConfig.get().isShowHelp()) drawGuideOverlay(context);
+
+        if (guiScaleCapF != 1f) context.pose().popMatrix();
     }
 
     // --- Inventory grid (same layout as VisualInventoryConfigScreen) ---
@@ -1045,8 +1056,17 @@ public class SortingOrderConfigScreen extends Screen {
         scrollOffset = (int)(rel * maxScroll);
     }
 
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space (see GuiScaleCap / init()). */
+    private MouseButtonEvent toVirtual(MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new MouseButtonEvent(GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
+    }
+
     @Override
     public boolean mouseDragged(MouseButtonEvent click, double deltaX, double deltaY) {
+        click = toVirtual(click);
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) { double s = 1.0 / guiScaleCapF; deltaX *= s; deltaY *= s; }
         if (click.button() == 0 && draggingScrollbar) {
             scrollbarDragTo(click.y());
             return true;
@@ -1061,6 +1081,7 @@ public class SortingOrderConfigScreen extends Screen {
 
     @Override
     public boolean mouseReleased(MouseButtonEvent click) {
+        click = toVirtual(click);
         if (click.button() == 0 && draggingScrollbar) {
             draggingScrollbar = false;
             return true;
@@ -1290,6 +1311,7 @@ public class SortingOrderConfigScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent click, boolean bl) {
+        click = toVirtual(click);
         double mouseX = click.x();
         double mouseY = click.y();
         int button = click.button();
@@ -1431,6 +1453,8 @@ public class SortingOrderConfigScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        mouseX = GuiScaleCap.mx(mouseX);
+        mouseY = GuiScaleCap.my(mouseY);
         // Check if mouse is over right panel
         int rightEdgeMargin = Math.max(10, width / 50);
         int panelW = Math.max(160, Math.min(220, width / 3));

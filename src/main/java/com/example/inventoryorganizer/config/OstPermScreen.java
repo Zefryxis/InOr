@@ -33,6 +33,8 @@ public class OstPermScreen extends Screen {
 
     @Override
     protected void init() {
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
         WarehouseClient.requestOstRoster(linkPos);
         rosterSeen = WarehouseClient.ostRosterVersion();
         buildRows();
@@ -78,8 +80,39 @@ public class OstPermScreen extends Screen {
         }
     }
 
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space (see GuiScaleCap / init()). */
+    private net.minecraft.client.input.MouseButtonEvent toVirtual(net.minecraft.client.input.MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new net.minecraft.client.input.MouseButtonEvent(
+                GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
+    }
+
+    @Override
+    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean bl) {
+        return super.mouseClicked(toVirtual(click), bl);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
+        return super.mouseReleased(toVirtual(click));
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double dragX, double dragY) {
+        float f = GuiScaleCap.renderFactor();
+        double s = f == 1f ? 1.0 : (1.0 / f);
+        return super.mouseDragged(toVirtual(click), dragX * s, dragY * s);
+    }
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) {
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(guiScaleCapF);
+        }
         // Consistent styled backdrop (matches HelpScreen): solid dark fill + a header bar with divider.
         context.fill(0, 0, width, height, 0xFF12121C);
         context.fill(0, 0, width, 40, 0xFF1A1A28);
@@ -92,6 +125,8 @@ public class OstPermScreen extends Screen {
             context.centeredText(font, Component.translatable("inventory-organizer.ost.empty"), width / 2, height / 2 - 4, 0xFFAAAAAA);
         }
         super.extractRenderState(context, mouseX, mouseY, delta); // widgets on top
+
+        if (guiScaleCapF != 1f) context.pose().popMatrix();
     }
 
     @Override

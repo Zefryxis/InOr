@@ -88,6 +88,11 @@ public class ComplexityOnboardingScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        // Counter-zoom (see GuiScaleCap) — at GUI Scale > 2, layout() computes against a bigger virtual
+        // width/height (as if GUI Scale were capped at 2) and the whole render pass is shrunk back down
+        // at render time (see extractRenderState/mouseClicked/mouseReleased/mouseDragged below).
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
         Layout l = layout();
 
         addRenderableWidget(StyledButton.styledBuilder(
@@ -117,6 +122,13 @@ public class ComplexityOnboardingScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) {
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(guiScaleCapF);
+        }
         super.extractRenderState(context, mouseX, mouseY, delta);
         Layout l = layout();
 
@@ -134,6 +146,32 @@ public class ComplexityOnboardingScreen extends Screen {
             drawWrapped(context, Component.translatable(descKeys[i]).getString(),
                     l.boxX, l.rowY[i] + BTN_H + 2, l.boxW, 0xFFAAAAAA, 6);
         }
+
+        if (guiScaleCapF != 1f) context.pose().popMatrix();
+    }
+
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space (see GuiScaleCap / init()). */
+    private net.minecraft.client.input.MouseButtonEvent toVirtual(net.minecraft.client.input.MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new net.minecraft.client.input.MouseButtonEvent(
+                GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
+    }
+
+    @Override
+    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean bl) {
+        return super.mouseClicked(toVirtual(click), bl);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
+        return super.mouseReleased(toVirtual(click));
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double dragX, double dragY) {
+        float f = GuiScaleCap.renderFactor();
+        double s = f == 1f ? 1.0 : (1.0 / f);
+        return super.mouseDragged(toVirtual(click), dragX * s, dragY * s);
     }
 
     private void drawWrapped(GuiGraphicsExtractor context, String text, int x, int y, int maxWidth, int color, int maxLines) {

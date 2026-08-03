@@ -65,6 +65,9 @@ public class HelpScreen extends Screen {
 
     @Override
     protected void init() {
+        // Counter-zoom (see GuiScaleCap) — see SpecialSettingsScreen for the rationale.
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
         boxW = Math.min(380, width - 40);
         boxX = (width - boxW) / 2;
         boxY = 34;
@@ -94,12 +97,22 @@ public class HelpScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        mouseX = GuiScaleCap.mx(mouseX);
+        mouseY = GuiScaleCap.my(mouseY);
         scroll = Math.max(0, Math.min(scroll + (verticalAmount > 0 ? -1 : 1), maxScroll));
         return true;
     }
 
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space (see GuiScaleCap / init()). */
+    private net.minecraft.client.input.MouseButtonEvent toVirtual(net.minecraft.client.input.MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new net.minecraft.client.input.MouseButtonEvent(
+                GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
+    }
+
     @Override
     public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean bl) {
+        click = toVirtual(click);
         if (super.mouseClicked(click, bl)) return true; // let the Back button etc. handle it first
         // Click anywhere OUTSIDE the text panel closes the guide.
         double mx = click.x(), my = click.y();
@@ -111,7 +124,26 @@ public class HelpScreen extends Screen {
     }
 
     @Override
+    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
+        return super.mouseReleased(toVirtual(click));
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double dragX, double dragY) {
+        float f = GuiScaleCap.renderFactor();
+        double s = f == 1f ? 1.0 : (1.0 / f);
+        return super.mouseDragged(toVirtual(click), dragX * s, dragY * s);
+    }
+
+    @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) {
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(guiScaleCapF);
+        }
         context.fill(0, 0, width, height, 0xFF12121C);
         context.centeredText(font, Component.literal("§e§lInventory Organizer §7— §fGuide"), width / 2, 14, 0xFFFFFFFF);
 
@@ -130,6 +162,8 @@ public class HelpScreen extends Screen {
         if (scroll < maxScroll) context.centeredText(font, Component.literal("§7▼ scroll for more"), width / 2, boxY + boxH + 4, 0xFFAAAAAA);
 
         super.extractRenderState(context, mouseX, mouseY, delta);
+
+        if (guiScaleCapF != 1f) context.pose().popMatrix();
     }
 
     @Override

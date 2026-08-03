@@ -38,6 +38,11 @@ public class BundleProfileListScreen extends Screen {
 
     @Override
     protected void init() {
+        // Counter-zoom (see GuiScaleCap) — at GUI Scale > 2, compute this fixed-pixel layout against a
+        // bigger virtual width/height (as if GUI Scale were capped at 2) and shrink the whole render
+        // pass back down at render time instead of reflowing rows for the real, cramped width/height.
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
         listW = Math.min(320, width - 40);
         listX = (width - listW) / 2;
         listY = 42;
@@ -184,6 +189,8 @@ public class BundleProfileListScreen extends Screen {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY,
                                  double horizontalAmount, double verticalAmount) {
+        mouseX = GuiScaleCap.mx(mouseX);
+        mouseY = GuiScaleCap.my(mouseY);
         if (mouseX >= listX && mouseX < listX + listW &&
                 mouseY >= listY && mouseY < listY + listH) {
             int prev = scroll;
@@ -196,6 +203,13 @@ public class BundleProfileListScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) {
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(guiScaleCapF);
+        }
         context.fill(0, 0, width, height, 0xFF151520);
         context.centeredText(font,
                 Component.literal("§e§l" + Component.translatable(
@@ -240,6 +254,32 @@ public class BundleProfileListScreen extends Screen {
                     0xFFAAAAAA);
 
         super.extractRenderState(context, mouseX, mouseY, delta);
+
+        if (guiScaleCapF != 1f) context.pose().popMatrix();
+    }
+
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space (see GuiScaleCap / init()). */
+    private net.minecraft.client.input.MouseButtonEvent toVirtual(net.minecraft.client.input.MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new net.minecraft.client.input.MouseButtonEvent(
+                GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
+    }
+
+    @Override
+    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean bl) {
+        return super.mouseClicked(toVirtual(click), bl);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
+        return super.mouseReleased(toVirtual(click));
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double dragX, double dragY) {
+        float f = GuiScaleCap.renderFactor();
+        double s = f == 1f ? 1.0 : (1.0 / f);
+        return super.mouseDragged(toVirtual(click), dragX * s, dragY * s);
     }
 
     private void drawDecoratedPanel(GuiGraphicsExtractor context, int x, int y, int w, int h) {

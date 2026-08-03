@@ -32,6 +32,8 @@ public class KitsScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
         rebuildWidgets();
     }
 
@@ -225,8 +227,17 @@ public class KitsScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) {
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(guiScaleCapF);
+        }
         super.extractRenderState(context, mouseX, mouseY, delta);
         if (showHelp) drawGuideOverlay(context);
+
+        if (guiScaleCapF != 1f) context.pose().popMatrix();
     }
 
     private void drawGuideOverlay(GuiGraphicsExtractor context) {
@@ -283,8 +294,27 @@ public class KitsScreen extends Screen {
         return "..." + path.substring(path.length() - (maxChars - 3));
     }
 
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space (see GuiScaleCap / init()). */
+    private MouseButtonEvent toVirtual(MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new MouseButtonEvent(GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent click) {
+        return super.mouseReleased(toVirtual(click));
+    }
+
+    @Override
+    public boolean mouseDragged(MouseButtonEvent click, double dragX, double dragY) {
+        float f = GuiScaleCap.renderFactor();
+        double s = f == 1f ? 1.0 : (1.0 / f);
+        return super.mouseDragged(toVirtual(click), dragX * s, dragY * s);
+    }
+
     @Override
     public boolean mouseClicked(MouseButtonEvent click, boolean bl) {
+        click = toVirtual(click);
         if (showHelp) {
             int gw = 420, gh = 308;
             int gx = width / 2 - gw / 2;

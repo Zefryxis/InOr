@@ -372,6 +372,8 @@ public class VisualInventoryConfigScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
 
         // Returning from a child screen that may have rewritten the config (e.g. Kits "Load"):
         // re-read the rules so our stale edit arrays don't overwrite the loaded data on next save.
@@ -663,12 +665,20 @@ public class VisualInventoryConfigScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) {
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(guiScaleCapF);
+        }
         super.extractRenderState(context, mouseX, mouseY, delta);
 
         // Very first launch → show the complexity-mode picker before anything else.
         if (pendingOnboarding) {
             pendingOnboarding = false;
             Minecraft.getInstance().gui.setScreen(new ComplexityOnboardingScreen(this));
+            if (guiScaleCapF != 1f) context.pose().popMatrix();
             return;
         }
 
@@ -678,6 +688,7 @@ public class VisualInventoryConfigScreen extends Screen {
             config.setTutorialSeen(true);
             config.save();
             Minecraft.getInstance().gui.setScreen(new TutorialScreen(this));
+            if (guiScaleCapF != 1f) context.pose().popMatrix();
             return;
         }
 
@@ -687,6 +698,7 @@ public class VisualInventoryConfigScreen extends Screen {
             config.setHelpSeen(true);
             config.save();
             Minecraft.getInstance().gui.setScreen(new HelpScreen(this));
+            if (guiScaleCapF != 1f) context.pose().popMatrix();
             return;
         }
 
@@ -799,6 +811,8 @@ public class VisualInventoryConfigScreen extends Screen {
                 Component.literal("\u26a0 Tier Order is not configured \u2013 set it up or click Solve!"),
                 warnX + 58, warnY + 3, 0xFFFF8800);
         }
+
+        if (guiScaleCapF != 1f) context.pose().popMatrix();
     }
 
     private boolean hasMeaningfulRules() {
@@ -1464,8 +1478,18 @@ public class VisualInventoryConfigScreen extends Screen {
         }
     }
 
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space (see GuiScaleCap / init()). */
+    private net.minecraft.client.input.MouseButtonEvent toVirtual(net.minecraft.client.input.MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new net.minecraft.client.input.MouseButtonEvent(
+                GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
+    }
+
     @Override
     public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double deltaX, double deltaY) {
+        click = toVirtual(click);
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) { double s = 1.0 / guiScaleCapF; deltaX *= s; deltaY *= s; }
         if (click.button() == 0 && draggingScrollbar) {
             scrollbarDragTo(click.y());
             return true;
@@ -1475,6 +1499,7 @@ public class VisualInventoryConfigScreen extends Screen {
 
     @Override
     public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
+        click = toVirtual(click);
         if (click.button() == 0 && draggingScrollbar) {
             draggingScrollbar = false;
             return true;
@@ -1568,6 +1593,7 @@ public class VisualInventoryConfigScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent click, boolean bl) {
+        click = toVirtual(click);
         double mouseX = click.x();
         double mouseY = click.y();
         int button = click.button();
@@ -1689,6 +1715,8 @@ public class VisualInventoryConfigScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        mouseX = GuiScaleCap.mx(mouseX);
+        mouseY = GuiScaleCap.my(mouseY);
         if (mouseX >= paletteX - 2 && mouseX < paletteX + paletteW + 2
                 && mouseY >= paletteY - 24 && mouseY < paletteY + paletteH) {
             int oldScroll = paletteScroll;

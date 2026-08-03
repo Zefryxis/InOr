@@ -45,6 +45,11 @@ public class HudLayoutScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        // Counter-zoom (see GuiScaleCap) — see SpecialSettingsScreen for the rationale. The preview
+        // frame's aspect-ratio math below still uses the live window's real aspect ratio (unaffected),
+        // it just now lays out against the (possibly larger) virtual width/height.
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
         // Right control panel reserves a fixed strip; the preview frame fills the rest, keeping the
         // live window aspect ratio (this.width/this.height already equals the GUI-scaled screen).
         panelW = 150;
@@ -141,6 +146,13 @@ public class HudLayoutScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) {
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(guiScaleCapF);
+        }
         // Backdrop + top title bar.
         context.fill(0, 0, width, height, 0xFF12121C);
         context.fill(0, 0, width, 24, 0xFF1A1A2E);
@@ -219,6 +231,8 @@ public class HudLayoutScreen extends Screen {
         if (hud.setEnabled) context.fill(px0 + 6, 127, px1 - 6, 128, 0xFF2A2A44);
 
         super.extractRenderState(context, mouseX, mouseY, delta);
+
+        if (guiScaleCapF != 1f) context.pose().popMatrix();
     }
 
     /** Gold L-shaped accents at the four corners of a rectangle. */
@@ -241,6 +255,7 @@ public class HudLayoutScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent click, boolean bl) {
+        click = toVirtual(click);
         if (super.mouseClicked(click, bl)) return true;
         if (click.button() == 0) {
             double mx = click.x(), my = click.y();
@@ -260,6 +275,9 @@ public class HudLayoutScreen extends Screen {
 
     @Override
     public boolean mouseDragged(MouseButtonEvent click, double deltaX, double deltaY) {
+        click = toVirtual(click);
+        float guiScaleCapF2 = GuiScaleCap.renderFactor();
+        if (guiScaleCapF2 != 1f) { double s = 1.0 / guiScaleCapF2; deltaX *= s; deltaY *= s; }
         if (dragElem >= 0 && click.button() == 0) {
             int e = dragElem;
             int ew = elemW(e), eh = elemH(e);
@@ -296,6 +314,8 @@ public class HudLayoutScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        mouseX = GuiScaleCap.mx(mouseX);
+        mouseY = GuiScaleCap.my(mouseY);
         // Resize the hovered element with the scroll wheel (0.1 per notch).
         for (int e = 2; e >= 0; e--) {
             if (!enabled(e)) continue;
@@ -311,6 +331,7 @@ public class HudLayoutScreen extends Screen {
 
     @Override
     public boolean mouseReleased(MouseButtonEvent click) {
+        click = toVirtual(click);
         if (dragElem >= 0 && click.button() == 0) {
             dragElem = -1;
             snapV = snapH = false;
@@ -318,6 +339,12 @@ public class HudLayoutScreen extends Screen {
             return true;
         }
         return super.mouseReleased(click);
+    }
+
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space (see GuiScaleCap / init()). */
+    private MouseButtonEvent toVirtual(MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new MouseButtonEvent(GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
     }
 
     @Override
