@@ -28,16 +28,26 @@ import net.minecraft.world.level.storage.LevelResource;
 public final class WorldScope {
     private WorldScope() {}
 
+    // TEMPORARY diagnostic: logs whenever the computed key actually CHANGES, so a reported "chests
+    // mix between dimensions" case can be traced from the client log without guessing further.
+    private static String lastLoggedKey = null;
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("inventory-organizer/WorldScope");
+
     /** Combined world/server + dimension key for {@code level}, or {@code null} if it can't be
      *  determined (defensive — callers should treat null the same as an unscoped/legacy entry). */
     public static String key(Level level) {
+        String result;
         try {
             String world = worldIdentity();
-            if (world == null || level == null) return null;
-            return world + "|" + level.dimension().identifier();
+            result = (world == null || level == null) ? null : world + "|" + level.dimension().identifier();
         } catch (Throwable t) {
-            return null;
+            result = null;
         }
+        if (!java.util.Objects.equals(result, lastLoggedKey)) {
+            lastLoggedKey = result;
+            LOGGER.info("[WorldScope] key changed -> {}", result);
+        }
+        return result;
     }
 
     /** Just the world/server part (no dimension) — used where only cross-world collisions matter. */
