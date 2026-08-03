@@ -37,6 +37,13 @@ public class KitsScreen extends Screen {
         rebuildWidgets();
     }
 
+    @Override
+    public void resize(int width, int height) {
+        this.width = GuiScaleCap.vw(width);
+        this.height = GuiScaleCap.vh(height);
+        rebuildWidgets();
+    }
+
     protected void rebuildWidgets() {
         clearWidgets();
 
