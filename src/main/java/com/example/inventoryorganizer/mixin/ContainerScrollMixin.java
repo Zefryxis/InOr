@@ -19,7 +19,7 @@ public abstract class ContainerScrollMixin {
     private void inor$onScroll(double mouseX, double mouseY, double horizontalAmount, double verticalAmount,
                                CallbackInfoReturnable<Boolean> cir) {
         AbstractContainerScreen<?> self = (AbstractContainerScreen<?>) (Object) this;
-        if (InventoryOrganizerClient.handleContainerScroll(self, verticalAmount)) {
+        if (InventoryOrganizerClient.handleContainerScroll(self, mouseX, mouseY, verticalAmount)) {
             cir.setReturnValue(true); // consumed
         }
     }

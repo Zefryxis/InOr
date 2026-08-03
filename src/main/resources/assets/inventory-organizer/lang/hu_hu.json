@@ -283,6 +283,8 @@
   "inventory-organizer.switch.copy_to_auto": "Másolás → Auto módba",
   "inventory-organizer.refill.on": "§aAuto-utántöltés: BE",
   "inventory-organizer.refill.off": "§cAuto-utántöltés: KI",
+  "inventory-organizer.scrollmove.on": "§aGörgetős mozgatás: BE",
+  "inventory-organizer.scrollmove.off": "§cGörgetős mozgatás: KI",
   "inventory-organizer.guide.fullinv.head": "Tele inventory",
   "inventory-organizer.guide.fullinv.t1": "A rendezés mostantól megbízhatóan kezeli a teli inventoryt. Ha egy tárgynak tényleg nincs szabad helye, üzenetet kapsz a nevével — szabadíts fel egy slotot, vagy állíts be Kuka szabályt az automatikus ürítéshez.",
   "inventory-organizer.sort.retry_failed": "§eA rendezés elakadt — mozgass meg pár tárgyat, majd rendezz újra.",

@@ -1154,13 +1154,23 @@ public class InventoryOrganizerClient implements ClientModInitializer {
      * In a chest: Shift+scroll over a slot loots it (quick-move). In the player inventory: a plain
      * scroll over a slot sorts one item into place. Free mode only. Returns true to consume the scroll.
      */
-    public static boolean handleContainerScroll(net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> screen, double vAmount) {
+    public static boolean handleContainerScroll(net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> screen,
+            double mouseX, double mouseY, double vAmount) {
         Minecraft client = Minecraft.getInstance();
         if (client.player == null) return false;
         // Never hijack the scroll wheel in the creative inventory: it's used to scroll the item list /
         // pull items out, so we leave it entirely to vanilla.
         if (screen instanceof net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen) return false;
+        // Villager trading: scrolling here is how the player browses trades / adjusts the view, it has
+        // nothing to do with "move this item" — quick-moving a hovered slot mid-trade (e.g. sending a
+        // sword flying while just scrolling to buy something) makes no sense here at all.
+        if (screen instanceof net.minecraft.client.gui.screens.inventory.MerchantScreen) return false;
         if (!ServerEnvironment.canUseFree()) return false;
+        if (!OrganizerConfig.get().isScrollMoveEnabled()) return false;
+        // Never act (and never consume the scroll) if the cursor isn't actually over the inventory/
+        // container panel itself — e.g. scrolling over the recipe book, empty space, or anywhere else
+        // on screen must fall through to vanilla untouched.
+        if (!isMouseOverContainerPanel(screen, mouseX, mouseY)) return false;
         boolean shift = isShiftDown(client);
 
         if (shift) {
@@ -1174,10 +1184,36 @@ public class InventoryOrganizerClient implements ClientModInitializer {
         // do a directional one-item transfer between the screen's two halves (see tryDirectionalScroll).
         net.minecraft.world.inventory.Slot hovered =
                 ((com.example.inventoryorganizer.mixin.ContainerScreenAccessor) screen).inorGetHoveredSlot();
-        if (hovered != null && hovered.hasItem()) {
+        if (hovered != null && hovered.hasItem() && isMovableSlot(hovered)) {
             return tryLootScroll(client, hovered);
         }
+        if (hovered != null && hovered.hasItem()) return true; // over a result/output slot: consume, don't act
         return tryDirectionalScroll(client, screen, vAmount > 0);
+    }
+
+    /** True if {@code mouseX,mouseY} (screen-space, same coordinate space Screen.mouseScrolled uses)
+     *  falls within the container GUI's own rectangle — the vanilla background panel, not the whole
+     *  screen (which also covers the recipe book, empty margins, etc.). */
+    private static boolean isMouseOverContainerPanel(net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> screen,
+            double mouseX, double mouseY) {
+        try {
+            com.example.inventoryorganizer.mixin.ContainerScreenAccessor acc =
+                    (com.example.inventoryorganizer.mixin.ContainerScreenAccessor) screen;
+            int left = acc.inorLeftPos(), top = acc.inorTopPos();
+            int w = acc.inorImageWidth(), h = acc.inorImageHeight();
+            return mouseX >= left && mouseX < left + w && mouseY >= top && mouseY < top + h;
+        } catch (Throwable t) {
+            return true; // defensive: never let an accessor failure silently disable the feature
+        }
+    }
+
+    /** False for output/result slots (crafting, furnace, villager trade) — quick-moving one of these
+     *  via an incidental scroll makes no sense (e.g. "scroll during crafting sends the crafted item
+     *  away before you're done", or a villager purchase triggering mid-browse). */
+    private static boolean isMovableSlot(net.minecraft.world.inventory.Slot slot) {
+        return !(slot instanceof net.minecraft.world.inventory.ResultSlot
+                || slot instanceof net.minecraft.world.inventory.FurnaceResultSlot
+                || slot instanceof net.minecraft.world.inventory.MerchantResultSlot);
     }
 
     /**
@@ -1193,6 +1229,13 @@ public class InventoryOrganizerClient implements ClientModInitializer {
      */
     private static boolean tryDirectionalScroll(Minecraft client,
             net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> screen, boolean up) {
+        // The crafting table (and anything else backed by a CraftingMenu, e.g. the 2x2 in the plain
+        // inventory) doesn't have a clean "upper storage half" the way a chest does — its first slots
+        // are the result + a 3x3 grid, not arbitrary storage. Treating them as a pseudo-chest here was
+        // exactly why scrolling during crafting could send the crafted item away before it was picked
+        // up on purpose. Hovering an actual grid item still works via the hover-quick-move path above.
+        if (screen instanceof net.minecraft.client.gui.screens.inventory.CraftingScreen) return false;
+
         net.minecraft.world.inventory.AbstractContainerMenu menu = client.player.containerMenu;
         if (menu == null) return false;
         int size = menu.slots.size();
@@ -1201,9 +1244,9 @@ public class InventoryOrganizerClient implements ClientModInitializer {
         if (screen instanceof InventoryScreen) {
             // InventoryMenu: 9-35 main inventory (upper), 36-44 hotbar (lower).
             if (up) {                                   // lower → upper: leftmost hotbar item
-                for (int i = 36; i <= 44 && i < size; i++) if (menu.slots.get(i).hasItem()) { target = i; break; }
+                for (int i = 36; i <= 44 && i < size; i++) if (isMovableSlot(menu.slots.get(i)) && menu.slots.get(i).hasItem()) { target = i; break; }
             } else {                                    // upper → lower: lowest main-inventory item
-                for (int i = 35; i >= 9; i--) if (i < size && menu.slots.get(i).hasItem()) { target = i; break; }
+                for (int i = 35; i >= 9; i--) if (i < size && isMovableSlot(menu.slots.get(i)) && menu.slots.get(i).hasItem()) { target = i; break; }
             }
         } else {
             // Chest menu: [0, chestSize) chest (upper), [chestSize, size) player inventory (lower).
@@ -1214,7 +1257,7 @@ public class InventoryOrganizerClient implements ClientModInitializer {
                 if (target < 0) for (int i = chestSize; i < chestSize + 27 && i < size; i++)
                     if (menu.slots.get(i).hasItem()) { target = i; break; }
             } else {                                    // withdraw: lowest chest item
-                for (int i = chestSize - 1; i >= 0; i--) if (menu.slots.get(i).hasItem()) { target = i; break; }
+                for (int i = chestSize - 1; i >= 0; i--) if (isMovableSlot(menu.slots.get(i)) && menu.slots.get(i).hasItem()) { target = i; break; }
             }
         }
         if (target < 0) return false; // nothing to move → let vanilla handle the scroll (e.g. recipe book)

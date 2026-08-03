@@ -283,6 +283,8 @@
   "inventory-organizer.switch.copy_to_auto": "Kopieren → Auto",
   "inventory-organizer.refill.on": "§aAuto-Nachfüllen: AN",
   "inventory-organizer.refill.off": "§cAuto-Nachfüllen: AUS",
+  "inventory-organizer.scrollmove.on": "§aScroll-Bewegen: AN",
+  "inventory-organizer.scrollmove.off": "§cScroll-Bewegen: AUS",
   "inventory-organizer.guide.fullinv.head": "Volles Inventar",
   "inventory-organizer.guide.fullinv.t1": "Das Sortieren kommt jetzt zuverlässig mit vollem Inventar zurecht. Hat ein Gegenstand wirklich keinen Platz, nennt dir eine Meldung welcher — schaffe Platz oder richte eine Müll-Regel ein.",
   "inventory-organizer.sort.retry_failed": "§eSortierung hängt — bewege ein paar Items und sortiere erneut.",

@@ -283,6 +283,8 @@
   "inventory-organizer.switch.copy_to_auto": "Copiar → Auto",
   "inventory-organizer.refill.on": "§aAuto-relleno: ON",
   "inventory-organizer.refill.off": "§cAuto-relleno: OFF",
+  "inventory-organizer.scrollmove.on": "§aMover con scroll: ON",
+  "inventory-organizer.scrollmove.off": "§cMover con scroll: OFF",
   "inventory-organizer.guide.fullinv.head": "Inventario lleno",
   "inventory-organizer.guide.fullinv.t1": "El orden ahora gestiona bien un inventario lleno. Si un objeto no tiene hueco, verás un mensaje con su nombre: libera un espacio o crea una regla de basura.",
   "inventory-organizer.sort.retry_failed": "§eEl orden se atascó — mueve algunos objetos y ordena de nuevo.",

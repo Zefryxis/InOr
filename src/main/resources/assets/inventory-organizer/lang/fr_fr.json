@@ -283,6 +283,8 @@
   "inventory-organizer.switch.copy_to_auto": "Copier → Auto",
   "inventory-organizer.refill.on": "§aRemplissage auto : ON",
   "inventory-organizer.refill.off": "§cRemplissage auto : OFF",
+  "inventory-organizer.scrollmove.on": "§aDéplacement au scroll : ON",
+  "inventory-organizer.scrollmove.off": "§cDéplacement au scroll : OFF",
   "inventory-organizer.guide.fullinv.head": "Inventaire plein",
   "inventory-organizer.guide.fullinv.t1": "Le tri gère désormais un inventaire plein de façon fiable. Si un objet n'a vraiment pas de place, un message le nomme — libère un emplacement ou crée une règle poubelle.",
   "inventory-organizer.sort.retry_failed": "§eLe tri a coincé — déplace quelques objets, puis retrie.",

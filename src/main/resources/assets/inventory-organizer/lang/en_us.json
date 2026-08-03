@@ -283,6 +283,8 @@
   "inventory-organizer.switch.copy_to_auto": "Copy → Auto",
   "inventory-organizer.refill.on": "§aAuto-refill: ON",
   "inventory-organizer.refill.off": "§cAuto-refill: OFF",
+  "inventory-organizer.scrollmove.on": "§aScroll-move: ON",
+  "inventory-organizer.scrollmove.off": "§cScroll-move: OFF",
   "inventory-organizer.guide.fullinv.head": "Full inventory",
   "inventory-organizer.guide.fullinv.t1": "Sorting handles a full inventory reliably. If an item truly has no free slot, you'll get a message naming it — free a slot, or set a Trash rule to auto-clear overflow.",
   "inventory-organizer.sort.retry_failed": "§eSorting hit a snag — try moving a few items, then sort again.",

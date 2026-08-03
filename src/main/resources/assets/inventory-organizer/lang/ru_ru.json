@@ -283,6 +283,8 @@
   "inventory-organizer.switch.copy_to_auto": "Копировать → Авто",
   "inventory-organizer.refill.on": "§aАвто-пополнение: ВКЛ",
   "inventory-organizer.refill.off": "§cАвто-пополнение: ВЫКЛ",
+  "inventory-organizer.scrollmove.on": "§aПеремещение колесом: ВКЛ",
+  "inventory-organizer.scrollmove.off": "§cПеремещение колесом: ВЫКЛ",
   "inventory-organizer.guide.fullinv.head": "Полный инвентарь",
   "inventory-organizer.guide.fullinv.t1": "Сортировка теперь надёжно справляется с полным инвентарём. Если предмету действительно нет места, появится сообщение с его названием — освободите слот или создайте правило мусорки.",
   "inventory-organizer.sort.retry_failed": "§eСортировка зависла — переместите несколько предметов и попробуйте снова.",

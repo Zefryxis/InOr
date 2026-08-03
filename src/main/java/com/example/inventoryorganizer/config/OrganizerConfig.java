@@ -93,6 +93,12 @@ public class OrganizerConfig {
     // in free mode. The manual chest-refill (button/keybind) is unaffected. Default on.
     private boolean autoRefillEnabled = true;
 
+    // Scroll-to-move master switch: scrolling over a hovered item quick-moves it (chest<->inventory),
+    // and a directional scroll with nothing hovered does a one-item transfer. Some players find this
+    // surprising (e.g. an incidental scroll while doing something unrelated moving an item they didn't
+    // mean to touch) and want it off entirely. Default on (existing behaviour unchanged).
+    private boolean scrollMoveEnabled = true;
+
     // Special slot keys for armor and offhand
     public static final String SLOT_ARMOR_HEAD = "armor_head";
     public static final String SLOT_ARMOR_CHEST = "armor_chest";
@@ -171,6 +177,9 @@ public class OrganizerConfig {
 
     public boolean isAutoRefillEnabled() { return autoRefillEnabled; }
     public void setAutoRefillEnabled(boolean v) { autoRefillEnabled = v; }
+
+    public boolean isScrollMoveEnabled() { return scrollMoveEnabled; }
+    public void setScrollMoveEnabled(boolean v) { scrollMoveEnabled = v; }
 
     public SlotRule getSlotRule(int slot) {
         if (autoRuleActive) {
@@ -1254,6 +1263,7 @@ public class OrganizerConfig {
         if (o.remoteCraftHud != null) this.remoteCraftHud = o.remoteCraftHud;
         this.craftPreferChests = o.craftPreferChests;
         this.autoRefillEnabled = o.autoRefillEnabled;
+        this.scrollMoveEnabled = o.scrollMoveEnabled;
         if (o.bundleProfiles != null) this.bundleProfiles = o.bundleProfiles;
         ensureSlotsAndProfiles();
     }

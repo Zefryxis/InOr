@@ -283,6 +283,8 @@
   "inventory-organizer.switch.copy_to_auto": "コピー → 自動",
   "inventory-organizer.refill.on": "§a自動補充：オン",
   "inventory-organizer.refill.off": "§c自動補充：オフ",
+  "inventory-organizer.scrollmove.on": "§aスクロール移動：オン",
+  "inventory-organizer.scrollmove.off": "§cスクロール移動：オフ",
   "inventory-organizer.guide.fullinv.head": "インベントリが満杯のとき",
   "inventory-organizer.guide.fullinv.t1": "整理は満杯のインベントリも確実に処理します。本当に置き場所がないアイテムは名前付きで通知されます——スロットを空けるか、ゴミ箱ルールを設定してください。",
   "inventory-organizer.sort.retry_failed": "§e整理に失敗——アイテムを少し動かしてからもう一度整理してください。",

@@ -283,6 +283,8 @@
   "inventory-organizer.switch.copy_to_auto": "Copiar → Auto",
   "inventory-organizer.refill.on": "§aAuto-reposição: ON",
   "inventory-organizer.refill.off": "§cAuto-reposição: OFF",
+  "inventory-organizer.scrollmove.on": "§aMover com scroll: ON",
+  "inventory-organizer.scrollmove.off": "§cMover com scroll: OFF",
   "inventory-organizer.guide.fullinv.head": "Inventário cheio",
   "inventory-organizer.guide.fullinv.t1": "A organização agora lida bem com o inventário cheio. Se um item realmente não tiver espaço, você verá uma mensagem com o nome dele — libere um espaço ou crie uma regra de lixo.",
   "inventory-organizer.sort.retry_failed": "§eA organização travou — mova alguns itens e organize de novo.",

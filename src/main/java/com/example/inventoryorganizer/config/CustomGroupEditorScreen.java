@@ -153,6 +153,13 @@ public class CustomGroupEditorScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        // Counter-zoom at high GUI Scale (see GuiScaleCap) — this screen previously reflowed the grid
+        // panel size against real width/height only, which could grow taller than the gap above the
+        // button row at a small real height and paint over Save/Set Icon/the page-nav arrows even
+        // though they stayed clickable. Working in a guaranteed-big-enough virtual canvas instead of
+        // trying to keep shrinking the grid to fit removes the problem at the source.
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
 
         int minPalette = 130;
         int margins = 30;
@@ -360,6 +367,13 @@ public class CustomGroupEditorScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) {
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(guiScaleCapF);
+        }
         super.extractRenderState(context, mouseX, mouseY, delta);
 
         context.centeredText(font,
@@ -400,6 +414,8 @@ public class CustomGroupEditorScreen extends Screen {
         }
 
         if (showHelp) drawGuideOverlay(context);
+
+        if (guiScaleCapF != 1f) context.pose().popMatrix();
     }
 
     private void drawGuideOverlay(GuiGraphicsExtractor context) {
@@ -605,8 +621,15 @@ public class CustomGroupEditorScreen extends Screen {
         paletteScroll = (int)Math.round(rel * maxPaletteScroll);
     }
 
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space (see GuiScaleCap / init()). */
+    private MouseButtonEvent toVirtual(MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new MouseButtonEvent(GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
+    }
+
     @Override
     public boolean mouseClicked(MouseButtonEvent click, boolean bl) {
+        click = toVirtual(click);
         if (showHelp) {
             int gw = 380, gh = 223;
             int gx = width / 2 - gw / 2;
@@ -666,6 +689,9 @@ public class CustomGroupEditorScreen extends Screen {
 
     @Override
     public boolean mouseDragged(MouseButtonEvent click, double deltaX, double deltaY) {
+        click = toVirtual(click);
+        float f = GuiScaleCap.renderFactor();
+        if (f != 1f) { double s = 1.0 / f; deltaX *= s; deltaY *= s; }
         if (click.button() == 0 && draggingScrollbar) {
             scrollbarDragTo(click.y());
             return true;
@@ -675,6 +701,7 @@ public class CustomGroupEditorScreen extends Screen {
 
     @Override
     public boolean mouseReleased(MouseButtonEvent click) {
+        click = toVirtual(click);
         if (click.button() == 0 && draggingScrollbar) {
             draggingScrollbar = false;
             return true;
@@ -684,6 +711,8 @@ public class CustomGroupEditorScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        mouseX = GuiScaleCap.mx(mouseX);
+        mouseY = GuiScaleCap.my(mouseY);
         if (mouseX >= paletteX - 8 && mouseX <= paletteX + paletteW + 8) {
             paletteScroll = Math.max(0, Math.min(maxPaletteScroll, paletteScroll - (int) verticalAmount));
             rebuildPaletteButtons();

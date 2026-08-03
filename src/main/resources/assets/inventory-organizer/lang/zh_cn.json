@@ -283,6 +283,8 @@
   "inventory-organizer.switch.copy_to_auto": "复制 → 自动",
   "inventory-organizer.refill.on": "§a自动补货：开启",
   "inventory-organizer.refill.off": "§c自动补货：关闭",
+  "inventory-organizer.scrollmove.on": "§a滚轮移动：开启",
+  "inventory-organizer.scrollmove.off": "§c滚轮移动：关闭",
   "inventory-organizer.guide.fullinv.head": "物品栏已满",
   "inventory-organizer.guide.fullinv.t1": "整理现在能可靠地处理满物品栏。如果某物品真的无处放置，会显示其名称的提示消息 — 请腾出槽位或创建垃圾规则。",
   "inventory-organizer.sort.retry_failed": "§e整理卡住 — 移动几个物品后再试。",

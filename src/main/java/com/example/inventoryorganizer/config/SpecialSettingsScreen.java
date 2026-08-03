@@ -41,6 +41,14 @@ public class SpecialSettingsScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        // Counter-zoom: at GUI Scale > 2, pretend we have as much room as GUI Scale 2 would give (a
+        // bigger virtual width/height than the real, cramped one), and compensate with a render-time
+        // scale-down + mouse-coordinate remap (see extractRenderState/mouseClicked/mouseReleased/
+        // mouseDragged below and GuiScaleCap's class doc). Reflowing this screen's fixed-pixel rows
+        // for every possible real width/height was tried repeatedly and never held up — this instead
+        // makes the "not enough room" case simply not happen for our own UI.
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
         rebuild();
     }
 
@@ -133,12 +141,22 @@ public class SpecialSettingsScreen extends Screen {
 
         // Auto-refill master switch. Shares the same config flag as the "Toggle Auto-Refill" keybind,
         // so the two stay perfectly in sync. (Crafting now always pulls from nearby chests — the old
-        // craft-source toggle was removed, chests are the source by design.)
+        // craft-source toggle was removed, chests are the source by design.) Shares its row with the
+        // scroll-move toggle below rather than adding a whole new row, so this doesn't make the
+        // already-tight vertical layout at small heights/high GUI Scale any tighter.
         addRenderableWidget(StyledButton.styledBuilder(Component.literal(autoRefillLabel()), btn -> {
             config.setAutoRefillEnabled(!config.isAutoRefillEnabled());
             config.save();
             btn.setMessage(Component.literal(autoRefillLabel()));
-        }).bounds(width / 2 - 74, height - 76, 148, 20).build());
+        }).bounds(width / 2 - 154, height - 76, 148, 20).build());
+
+        // Scroll-to-move master switch: some players find an incidental scroll moving an item (e.g.
+        // while browsing something unrelated) surprising and want it off entirely.
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal(scrollMoveLabel()), btn -> {
+            config.setScrollMoveEnabled(!config.isScrollMoveEnabled());
+            config.save();
+            btn.setMessage(Component.literal(scrollMoveLabel()));
+        }).bounds(width / 2 + 6, height - 76, 148, 20).build());
 
         addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.hud"),
                 btn -> Minecraft.getInstance().gui.setScreen(new HudLayoutScreen(this))
@@ -163,8 +181,24 @@ public class SpecialSettingsScreen extends Screen {
                 : "inventory-organizer.refill.off").getString();
     }
 
+    private String scrollMoveLabel() {
+        return Component.translatable(config.isScrollMoveEnabled()
+                ? "inventory-organizer.scrollmove.on"
+                : "inventory-organizer.scrollmove.off").getString();
+    }
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float f = GuiScaleCap.renderFactor();
+        if (f != 1f) {
+            // Virtual mouse coords (matching the virtual width/height widget bounds were computed in)
+            // so hover-highlighting inside the vanilla button rendering super.extractRenderState() does
+            // still lines up correctly once we scale the whole pass down below.
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(f);
+        }
         super.extractRenderState(context, mouseX, mouseY, delta);
         int leftX = leftX(), rightX = rightX();
 
@@ -225,6 +259,8 @@ public class SpecialSettingsScreen extends Screen {
         if (showHelp) drawHelpOverlay(context);
         if (showWhitelistConfirm) drawWhitelistConfirm(context, mouseX, mouseY);
         if (showModeConfirm) drawModeConfirm(context, mouseX, mouseY);
+
+        if (f != 1f) context.pose().popMatrix();
     }
 
     // Larger, richer confirm box for the complexity switch — it explains WHY the levels exist and what
@@ -525,8 +561,29 @@ public class SpecialSettingsScreen extends Screen {
         return out;
     }
 
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space — matching the widget bounds
+     *  and modal-dialog rects, which were all computed with the virtual width/height set in init(). */
+    private net.minecraft.client.input.MouseButtonEvent toVirtual(net.minecraft.client.input.MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new net.minecraft.client.input.MouseButtonEvent(
+                GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
+        return super.mouseReleased(toVirtual(click));
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double dragX, double dragY) {
+        float f = GuiScaleCap.renderFactor();
+        double s = f == 1f ? 1.0 : (1.0 / f);
+        return super.mouseDragged(toVirtual(click), dragX * s, dragY * s);
+    }
+
     @Override
     public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean bl) {
+        click = toVirtual(click);
         if (showHelp) {
             int[] d = helpOverlayDims();
             int boxX = d[0], boxY = d[1], boxW = d[2], boxH = d[3];
