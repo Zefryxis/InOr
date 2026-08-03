@@ -1,8 +1,8 @@
 # Changelog
 
-## 1.6.2-beta — 26.2
+## 1.6.2 — 26.2
 
-A fast community-requested fix: the Remote Crafting panel's layout is now configurable, so it can be moved out of the way of other mods (like JEI) that also dock to the screen's edge. Released as a beta — tested thoroughly in single-player, dedicated-server testing still pending.
+A fast community-requested fix: the Remote Crafting panel's layout is now configurable, so it can be moved out of the way of other mods (like JEI) that also dock to the screen's edge, plus a round of GUI-overlap and scroll-behavior fixes reported by players.
 
 ### Configurable Remote Crafting HUD layout
 - Reported in [#4](https://github.com/Zefryxis/InOr/issues/4): the nearby-chest-contents panel always docked to the right, colliding with JEI's recipe panel. Split into three independently positionable pieces: the Materials panel — search/qty/scroll + chest-content list (left/right, `⇄` button, clears the vanilla recipe book and its tabs when open on that side), the existing K/S/OI/HUD/Wh quick-action row (above/below/right, `⇅` button, stacks vertically when right), and the deposit slot (freely draggable anywhere on screen via its move handle).

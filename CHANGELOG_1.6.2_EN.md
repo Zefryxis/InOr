@@ -1,6 +1,6 @@
-# Inventory Organizer 1.6.2-beta — Changelog
+# Inventory Organizer 1.6.2 — Changelog
 
-A fast community-requested fix: the Remote Crafting panel's layout is now configurable, so it can be moved out of the way of other mods (like JEI) that also dock to the screen's edge. Released as a **beta**: it's been tested thoroughly in single-player, but not yet on a dedicated server, and a couple more improvements are planned before the final release.
+A fast community-requested fix: the Remote Crafting panel's layout is now configurable, so it can be moved out of the way of other mods (like JEI) that also dock to the screen's edge, plus a round of GUI-overlap and scroll-behavior fixes reported by players.
 
 ## 🧭 Configurable Remote Crafting HUD layout
 
@@ -26,6 +26,6 @@ Reported in [#4](https://github.com/Zefryxis/InOr/issues/4): the nearby-chest-co
 
 ---
 
-**Version**: 1.6.2-beta
+**Version**: 1.6.2
 **Platform**: Modrinth (Fabric) — MC 26.2
 **Author**: Zefryxis
