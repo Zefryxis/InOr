@@ -152,6 +152,16 @@ public final class RemoteCraftPanel {
     private static final int GUI_W = 176, GUI_H = 166;
     private static final int GAP = 4, MIN_W = 86, MAX_W = 160, MARGIN = 4;
 
+    // The deposit slot draws extra text AROUND itself (the "release to drop" hint to its right while
+    // dragging, and the two-line "→ chest" / "(empty hand = grid→chest)" hint centred below it at rest)
+    // that the plain slot-only MARGIN above doesn't account for. Letting the slot itself get within
+    // MARGIN of an edge let that surrounding text render (and get scissor-clipped) past the real screen
+    // bounds, which this custom render pipeline treats as a hard crash rather than a silent clip — so the
+    // deposit slot gets its own, more generous clamp on every axis to keep ALL of that text on-screen.
+    private static final int DEP_MARGIN_SIDE = 100;   // room for the drag hint / centred label halves
+    private static final int DEP_MARGIN_TOP = 10;     // room for the move-handle sitting just above the slot
+    private static final int DEP_MARGIN_BOTTOM = 32;  // room for the two-line label below the slot
+
     private void layout() {
         int guiLeft = (screen.width - GUI_W) / 2;
         int guiTop = (screen.height - GUI_H) / 2;
@@ -214,8 +224,8 @@ public final class RemoteCraftPanel {
         } else {
             depositX = (int) Math.round(s.depositX * screen.width) - DEP / 2;
             depositY = (int) Math.round(s.depositY * screen.height) - DEP / 2;
-            depositX = Math.max(MARGIN, Math.min(screen.width - DEP - MARGIN, depositX));
-            depositY = Math.max(MARGIN, Math.min(screen.height - DEP - MARGIN, depositY));
+            depositX = Math.max(DEP_MARGIN_SIDE, Math.min(screen.width - DEP - DEP_MARGIN_SIDE, depositX));
+            depositY = Math.max(DEP_MARGIN_TOP, Math.min(screen.height - DEP - DEP_MARGIN_BOTTOM, depositY));
         }
         if (depositBtn != null) depositBtn.setPosition(depositX, depositY);
         if (moveToggleBtn != null) moveToggleBtn.setPosition(depositX + DEP - 6, depositY - 6);
@@ -414,8 +424,8 @@ public final class RemoteCraftPanel {
         } catch (Throwable t) {
             down = false; // defensive: never let a raw GLFW query crash the render pass
         }
-        dragDepositX = Math.max(MARGIN, Math.min(screen.width - DEP - MARGIN, mouseX - DEP / 2));
-        dragDepositY = Math.max(MARGIN, Math.min(screen.height - DEP - MARGIN, mouseY - DEP / 2));
+        dragDepositX = Math.max(DEP_MARGIN_SIDE, Math.min(screen.width - DEP - DEP_MARGIN_SIDE, mouseX - DEP / 2));
+        dragDepositY = Math.max(DEP_MARGIN_TOP, Math.min(screen.height - DEP - DEP_MARGIN_BOTTOM, mouseY - DEP / 2));
         if (!down && dragWasDown) {
             RemoteCraftHudSettings s = OrganizerConfig.get().getRemoteCraftHud();
             s.depositMoved = true;
