@@ -406,15 +406,27 @@ public class VisualInventoryConfigScreen extends Screen {
         paletteY = gridY + 4;
         paletteH = height - paletteY - 44;
 
-        // Search field above palette
-        searchField = new EditBox(font, paletteX, paletteY - 16, paletteW, 14, Component.literal("Search..."));
-        searchField.setMaxLength(50);
-        searchField.setHint(Component.literal("Search items..."));
-        searchField.setResponder(text -> applyFilter());
+        // Search field above palette. Persist the SAME instance across init() reruns (e.g. a window
+        // resize or GUI-Scale change while the screen is open) instead of replacing it \u2014 a fresh EditBox
+        // loses whatever the player had typed/focused, matching the reuse pattern already used by
+        // CustomGroupListScreen for the same reason.
+        boolean firstCreate = searchField == null;
+        boolean searchWasFocused = !firstCreate && searchField.isFocused();
+        if (firstCreate) {
+            searchField = new EditBox(font, paletteX, paletteY - 16, paletteW, 14, Component.literal("Search..."));
+            searchField.setMaxLength(50);
+            searchField.setHint(Component.literal("Search items..."));
+            searchField.setResponder(text -> applyFilter());
+        } else {
+            searchField.setX(paletteX);
+            searchField.setY(paletteY - 16);
+            searchField.setWidth(paletteW);
+        }
         addRenderableWidget(searchField);
+        if (searchWasFocused) setFocused(searchField);
 
         buildAllEntries();
-        lastSearch = "\uFFFF"; // force applyFilter to rebuild filteredEntries
+        if (firstCreate) lastSearch = "\uFFFF"; // first run only: force applyFilter to build filteredEntries
         applyFilter();
         updatePaletteScroll();
         rebuildPaletteButtons();
@@ -790,14 +802,6 @@ public class VisualInventoryConfigScreen extends Screen {
         }
 
         drawSlotTooltip(context, mouseX, mouseY);
-
-        // Check search field changes every frame
-        if (searchField != null) {
-            String current = searchField.getValue().trim().toLowerCase();
-            if (!current.equals(lastSearch)) {
-                applyFilter();
-            }
-        }
 
         // Tier Order warning: show when rules are configured but no tier assignments are saved
         boolean needsWarning = hasMeaningfulRules() && config.getPreference("tier_order").length == 0;

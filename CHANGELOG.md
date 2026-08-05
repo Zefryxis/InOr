@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.4 — 26.2
+
+Another quick hotfix: search boxes and list scrolling not working right on a few config screens.
+
+### Bug fix
+- Fixed the search box not accepting typing, and the list snapping back to the top, on the Inventory tab and the Trash editor (reported in [#6](https://github.com/Zefryxis/InOr/issues/6)) — the search box was being rebuilt from scratch on every re-layout, discarding what was typed and its focus. Also removed a redundant per-frame search re-check that could re-trigger a scroll reset.
+
 ## 1.6.3 — 26.2
 
 A quick hotfix on top of 1.6.2: a crash found right after release.
