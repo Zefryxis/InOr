@@ -206,6 +206,24 @@ public class TutorialScreen extends Screen {
         if (guiScaleCapF != 1f) context.pose().popMatrix();
     }
 
+    /** Enter/numpad-Enter fast-forwards the current caption's typewriter reveal instead of waiting it
+     *  out — shifts sceneStartMs back so elapsed already reads as "fully typed," which also makes the
+     *  auto-advance dwell (READ_PAD_MS) start counting from that point, same as if it had typed normally
+     *  and then finished — the reader still gets the full read pad, just without waiting on the typing. */
+    @Override
+    public boolean keyPressed(net.minecraft.client.input.KeyEvent keyEvent) {
+        int key = keyEvent.key();
+        if (key == org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER || key == org.lwjgl.glfw.GLFW.GLFW_KEY_KP_ENTER) {
+            long typeMs = caption().length() * MS_PER_CHAR;
+            long elapsed = System.currentTimeMillis() - sceneStartMs;
+            if (elapsed < typeMs) {
+                sceneStartMs -= (typeMs - elapsed);
+                return true;
+            }
+        }
+        return super.keyPressed(keyEvent);
+    }
+
     /** Small "Next in Ns" hint near the Next button so the reader knows how long they still have
      *  before auto-advance kicks in (manual Back/Next always still works regardless). */
     private void drawAutoAdvanceCountdown(GuiGraphicsExtractor context, long remainingMs) {
