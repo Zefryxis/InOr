@@ -1,12 +1,12 @@
 package com.example.inventoryorganizer.config;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.client.input.KeyInput;
-import net.minecraft.text.Text;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.network.chat.Component;
 
 import java.util.List;
 
@@ -17,126 +17,310 @@ public class CustomGroupListScreen extends Screen {
 
     // Name input popup state
     private boolean showNameInput = false;
-    private TextFieldWidget nameField;
+    private EditBox nameField;
     private String pendingEditGroup = null; // null = new group, non-null = rename existing
 
+    // Status message after Import button
+    private String statusMessage = null;
+    private long statusUntilMs = 0L;
+
+    // Search box (filters the group list by name)
+    private EditBox searchField;
+
+    // Scrolling
+    private int scrollOffset = 0;
+    private static final int LIST_TOP = 44;
+    private static final int ROW_H = 22;
+
+    /** How many rows fit between the list top and the bottom button row (height-dependent). */
+    private int rowsVisible() {
+        int bottomLimit = (height - 28) - 6; // bottom button row top, minus a small margin
+        return Math.max(3, (bottomLimit - LIST_TOP) / ROW_H);
+    }
+
+    /** One row in the combined list (built-in groups first, then custom). */
+    private static final class Row {
+        final String name;
+        final boolean builtin;
+        Row(String name, boolean builtin) { this.name = name; this.builtin = builtin; }
+    }
+
+    private java.util.List<Row> buildRows() {
+        // Built-in groups are now materialized as ordinary custom groups (see
+        // OrganizerConfig.materializeBuiltinGroupsOnce), so they appear here in the single custom list
+        // — fully editable, deletable, and rank-able like any hand-made group.
+        java.util.List<Row> rows = new java.util.ArrayList<>();
+        String q = (searchField != null) ? searchField.getValue().trim().toLowerCase() : "";
+        for (String name : config.getCustomGroupNames()) {
+            // Show ALL custom groups, including the materialized built-in ones — they are editable here
+            // (the user can customize their items). Built-in groups are flagged so they can't be DELETED.
+            boolean builtin = com.example.inventoryorganizer.InventorySorter.isBuiltinGroup(name);
+            if (q.isEmpty() || name.toLowerCase().contains(q)) rows.add(new Row(name, builtin));
+        }
+        return rows;
+    }
+
     public CustomGroupListScreen(Screen parent) {
-        super(Text.literal("Custom Item Groups"));
+        super(Component.translatable("inventory-organizer.groups.screen_title"));
         this.parent = parent;
         this.config = OrganizerConfig.get();
+        // Defensive: make sure the built-in→custom migration has run before listing.
+        this.config.materializeBuiltinGroupsOnce();
+    }
+
+    private static String tr(String key, Object... args) { return Component.translatable(key, args).getString(); }
+
+    private void setStatus(String msg) {
+        this.statusMessage = msg;
+        this.statusUntilMs = System.currentTimeMillis() + 5000L;
+    }
+
+    /** Scan the import folder and add each .txt file as a new custom group. */
+    private void importAllFromFolder() {
+        try {
+            java.util.List<GroupTextFile.ImportedGroup> imported = GroupTextFile.scanImportFolder();
+            if (imported.isEmpty()) {
+                setStatus(tr("inventory-organizer.groups.status_no_txt"));
+                return;
+            }
+            int added = 0, updated = 0;
+            for (GroupTextFile.ImportedGroup g : imported) {
+                if (g.itemIds.isEmpty()) continue;
+                if (config.getCustomGroups().containsKey(g.groupName)) {
+                    config.setCustomGroup(g.groupName, g.itemIds);
+                    updated++;
+                } else {
+                    config.setCustomGroup(g.groupName, g.itemIds);
+                    added++;
+                }
+            }
+            config.save();
+            setStatus(tr("inventory-organizer.groups.status_imported", added, updated));
+            rebuildButtons();
+        } catch (Exception e) {
+            setStatus(tr("inventory-organizer.groups.status_import_failed", e.getMessage()));
+        }
     }
 
     @Override
     protected void init() {
         super.init();
+        // Counter-zoom (see GuiScaleCap) — see CustomGroupEditorScreen for the rationale.
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
+        // Persist the search box across rebuilds: create it once, then re-add the SAME instance in
+        // rebuildButtons() (which clears all widgets). Re-adding keeps its text, cursor and focus.
+        if (searchField == null) {
+            searchField = new EditBox(font, width / 2 - 100, 22, 200, 16, Component.translatable("inventory-organizer.groups.search_field"));
+            searchField.setMaxLength(32);
+            searchField.setHint(Component.translatable("inventory-organizer.groups.search_hint"));
+            searchField.setResponder(t -> { scrollOffset = 0; rebuildButtons(); });
+        } else {
+            // width may have changed on resize
+            searchField.setX(width / 2 - 100);
+        }
         rebuildButtons();
     }
 
     private void rebuildButtons() {
-        clearChildren();
+        boolean searchWasFocused = searchField != null && searchField.isFocused();
+        clearWidgets();
+        if (searchField != null) {
+            addRenderableWidget(searchField);
+            if (searchWasFocused) setFocused(searchField); // keep typing alive across rebuilds
+        }
 
-        List<String> names = config.getCustomGroupNames();
-        int startY = 30;
-        int rowH = 24;
+        java.util.List<Row> rows = buildRows();
+        int startY = LIST_TOP;
+        int rowH = ROW_H;
+        int rowsVis = rowsVisible();
 
-        for (int i = 0; i < names.size(); i++) {
-            final String name = names.get(i);
-            int y = startY + i * rowH;
+        // Clamp scroll.
+        int maxScroll = Math.max(0, rows.size() - rowsVis);
+        if (scrollOffset > maxScroll) scrollOffset = maxScroll;
+        if (scrollOffset < 0) scrollOffset = 0;
 
-            addDrawableChild(StyledButton.styledBuilder(Text.literal("\u270E Edit"), btn -> {
+        int end = Math.min(rows.size(), scrollOffset + rowsVis);
+        for (int i = scrollOffset; i < end; i++) {
+            final Row row = rows.get(i);
+            int y = startY + (i - scrollOffset) * rowH;
+
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.groups.edit"), btn -> {
                 config.save();
-                MinecraftClient.getInstance().setScreen(new CustomGroupEditorScreen(this, name));
-            }).dimensions(width / 2 - 100, y, 60, 18).build());
+                // Edit as a NORMAL custom group (isBuiltin=false) so changes save to customGroups \u2014 the
+                // store the sorter actually reads. The built-in flag only governs deletability.
+                Minecraft.getInstance().gui.setScreen(new CustomGroupEditorScreen(this, row.name, false));
+            }).bounds(width / 2 - 130, y, 50, 18).build());
 
-            addDrawableChild(StyledButton.styledBuilder(Text.literal("\u2716 Delete"), btn -> {
-                config.deleteCustomGroup(name);
-                config.save();
-                rebuildButtons();
-            }).dimensions(width / 2 - 36, y, 60, 18).build());
-
+            // Built-in groups are editable but NOT deletable (they're permanent custom groups).
+            if (!row.builtin) {
+                addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.groups.delete"), btn -> {
+                    config.deleteCustomGroup(row.name);
+                    config.save();
+                    rebuildButtons();
+                }).bounds(width / 2 - 76, y, 50, 18).build());
+            }
             // group name label drawn in render
         }
 
-        int bottomY = height - 28;
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("+ New Group"), btn -> {
+        // Scroll up/down buttons (right side) if list overflows.
+        if (rows.size() > rowsVis) {
+            addRenderableWidget(StyledButton.styledBuilder(Component.literal("\u25B2"), btn -> {
+                scrollOffset = Math.max(0, scrollOffset - 1);
+                rebuildButtons();
+            }).bounds(width / 2 + 120, startY, 18, 18).build());
+            addRenderableWidget(StyledButton.styledBuilder(Component.literal("\u25BC"), btn -> {
+                scrollOffset = Math.min(maxScroll, scrollOffset + 1);
+                rebuildButtons();
+            }).bounds(width / 2 + 120, startY + (rowsVis - 1) * rowH, 18, 18).build());
+        }
+
+        // Single bottom row: [+ New] [Import] [Folder] [Back]
+        // All on one line so nothing overlaps the scrollable list above.
+        int btnY = height - 28;
+        int gap = 4;
+        int wNew = 70, wImp = 62, wFld = 46, wBack = 46;
+        int total = wNew + wImp + wFld + wBack + gap * 3;
+        int x = width / 2 - total / 2;
+
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.groups.new"), btn -> {
             showNameInput = true;
             pendingEditGroup = null;
-            nameField = new TextFieldWidget(textRenderer, width / 2 - 80, height / 2 - 10, 160, 20, Text.literal("Group name"));
+            nameField = new EditBox(font, width / 2 - 80, height / 2 - 10, 160, 20, Component.translatable("inventory-organizer.groups.name_field"));
             nameField.setMaxLength(32);
-            nameField.setEditableColor(0xFFFFFFFF);
+            nameField.setTextColor(0xFFFFFFFF);
             nameField.setFocused(true);
-            addDrawableChild(nameField);
-        }).dimensions(width / 2 - 56, bottomY, 80, 20).build());
+            addRenderableWidget(nameField);
+        }).bounds(x, btnY, wNew, 20).build());
+        x += wNew + gap;
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Back"), btn -> {
-            MinecraftClient.getInstance().setScreen(parent);
-        }).dimensions(width / 2 + 28, bottomY, 50, 20).build());
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.groups.import_all"), btn -> {
+            importAllFromFolder();
+        }).bounds(x, btnY, wImp, 20).build());
+        x += wImp + gap;
+
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.groups.folder"), btn -> {
+            GroupTextFile.openImportFolder();
+            setStatus(tr("inventory-organizer.groups.status_opened_import_folder"));
+        }).bounds(x, btnY, wFld, 20).build());
+        x += wFld + gap;
+
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.groups.back"), btn -> {
+            Minecraft.getInstance().gui.setScreen(parent);
+        }).bounds(x, btnY, wBack, 20).build());
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        super.render(context, mouseX, mouseY, delta);
+    public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) {
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(guiScaleCapF);
+        }
+        super.extractRenderState(context, mouseX, mouseY, delta);
 
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal("Custom Item Groups"), width / 2, 8, 0xFFFFFFFF);
+        context.centeredText(font, Component.translatable("inventory-organizer.groups.header"), width / 2, 8, 0xFFFFFFFF);
 
-        List<String> names = config.getCustomGroupNames();
-        int startY = 30;
-        int rowH = 24;
-        for (int i = 0; i < names.size(); i++) {
-            String name = names.get(i);
-            int y = startY + i * rowH;
-            int itemCount = config.getCustomGroup(name).size();
-            context.drawTextWithShadow(textRenderer,
-                Text.literal("\u00a7e" + name + "\u00a7r \u00a77(" + itemCount + " items)"),
-                width / 2 + 28, y + 4, 0xFFFFFFFF);
+        java.util.List<Row> rows = buildRows();
+        int startY = LIST_TOP;
+        int rowH = ROW_H;
+        int end = Math.min(rows.size(), scrollOffset + rowsVisible());
+        for (int i = scrollOffset; i < end; i++) {
+            Row row = rows.get(i);
+            int y = startY + (i - scrollOffset) * rowH;
+            int itemCount = config.getCustomGroup(row.name).size();
+            String label = tr("inventory-organizer.groups.row_label", row.name, itemCount);
+            context.text(font, Component.literal(label), width / 2 - 20, y + 4, 0xFFFFFFFF);
         }
 
-        if (names.isEmpty()) {
-            context.drawCenteredTextWithShadow(textRenderer,
-                Text.literal("\u00a77No custom groups yet. Click \"+ New Group\" to create one."),
-                width / 2, height / 2 - 20, 0xFFAAAAAA);
+        // Status message after Import / Folder buttons
+        if (statusMessage != null && System.currentTimeMillis() < statusUntilMs) {
+            context.centeredText(font, Component.literal(statusMessage), width / 2, height - 50, 0xFFFFFFFF);
         }
 
         if (showNameInput && nameField != null) {
             int bx = width / 2 - 100;
             int by = height / 2 - 30;
             context.fill(bx, by, bx + 200, by + 80, 0xFF222222);
-            context.drawHorizontalLine(bx, bx + 200, by, 0xFF888888);
-            context.drawHorizontalLine(bx, bx + 200, by + 80, 0xFF888888);
-            context.drawVerticalLine(bx, by, by + 80, 0xFF888888);
-            context.drawVerticalLine(bx + 200, by, by + 80, 0xFF888888);
-            context.drawCenteredTextWithShadow(textRenderer, Text.literal("Enter group name:"), width / 2, by + 8, 0xFFFFFF55);
-            context.drawCenteredTextWithShadow(textRenderer, Text.literal("[Enter] confirm  [Esc] cancel"), width / 2, by + 60, 0xFF888888);
+            context.horizontalLine(bx, bx + 200, by, 0xFF888888);
+            context.horizontalLine(bx, bx + 200, by + 80, 0xFF888888);
+            context.verticalLine(bx, by, by + 80, 0xFF888888);
+            context.verticalLine(bx + 200, by, by + 80, 0xFF888888);
+            context.centeredText(font, Component.translatable("inventory-organizer.groups.enter_name_prompt"), width / 2, by + 8, 0xFFFFFF55);
+            context.centeredText(font, Component.translatable("inventory-organizer.groups.confirm_cancel_hint"), width / 2, by + 60, 0xFF888888);
             // Re-render nameField on top of fill (was covered by fill after super.render)
-            nameField.render(context, mouseX, mouseY, delta);
+            nameField.extractRenderState(context, mouseX, mouseY, delta);
         }
+
+        if (guiScaleCapF != 1f) context.pose().popMatrix();
+    }
+
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space (see GuiScaleCap / init()). */
+    private net.minecraft.client.input.MouseButtonEvent toVirtual(net.minecraft.client.input.MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new net.minecraft.client.input.MouseButtonEvent(
+                GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
     }
 
     @Override
-    public boolean keyPressed(KeyInput keyInput) {
+    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean bl) {
+        return super.mouseClicked(toVirtual(click), bl);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
+        return super.mouseReleased(toVirtual(click));
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double dragX, double dragY) {
+        float f = GuiScaleCap.renderFactor();
+        double s = f == 1f ? 1.0 : (1.0 / f);
+        return super.mouseDragged(toVirtual(click), dragX * s, dragY * s);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        mouseX = GuiScaleCap.mx(mouseX);
+        mouseY = GuiScaleCap.my(mouseY);
+        if (!showNameInput) {
+            int total = buildRows().size();
+            int maxScroll = Math.max(0, total - rowsVisible());
+            if (verticalAmount < 0) scrollOffset = Math.min(maxScroll, scrollOffset + 1);
+            else if (verticalAmount > 0) scrollOffset = Math.max(0, scrollOffset - 1);
+            rebuildButtons();
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent keyEvent) {
         if (showNameInput && nameField != null) {
-            if (keyInput.key() == 256) { // Esc
+            if (keyEvent.key() == 256) { // Esc
                 showNameInput = false;
-                remove(nameField);
+                removeWidget(nameField);
                 nameField = null;
                 return true;
             }
-            if (keyInput.key() == 257 || keyInput.key() == 335) { // Enter / numpad Enter
-                String name = nameField.getText().trim();
+            if (keyEvent.key() == 257 || keyEvent.key() == 335) { // Enter / numpad Enter
+                String name = nameField.getValue().trim();
                 if (!name.isEmpty()) {
                     showNameInput = false;
-                    remove(nameField);
+                    removeWidget(nameField);
                     nameField = null;
                     if (!config.getCustomGroups().containsKey(name)) {
                         config.setCustomGroup(name, new java.util.ArrayList<>());
                         config.save();
                     }
-                    MinecraftClient.getInstance().setScreen(new CustomGroupEditorScreen(this, name));
+                    Minecraft.getInstance().gui.setScreen(new CustomGroupEditorScreen(this, name));
                 }
                 return true;
             }
-            return nameField.keyPressed(keyInput);
+            return nameField.keyPressed(keyEvent);
         }
-        return super.keyPressed(keyInput);
+        return super.keyPressed(keyEvent);
     }
 }

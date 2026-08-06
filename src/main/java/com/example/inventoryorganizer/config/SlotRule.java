@@ -15,6 +15,9 @@ public class SlotRule {
     private String value; // For GROUP: "weapons", "tools", "armor", "blocks", "food", "utility", "valuables"
                           // For SPECIFIC: type name like "sword", "pickaxe"
                           // For SPECIFIC_ITEM: full item id like "minecraft:diamond_sword"
+    private boolean refill; // Auto-refill: in free mode, when this slot empties (used up / tool broke),
+                            // refill it from the rest of the inventory with the same item. Independent
+                            // of type/value — any slot can be flagged. Default false.
 
     public SlotRule() {
         this.type = Type.ANY;
@@ -30,9 +33,13 @@ public class SlotRule {
     public void setType(Type type) { this.type = type; }
     public String getValue() { return value; }
     public void setValue(String value) { this.value = value; }
+    public boolean isRefill() { return refill; }
+    public void setRefill(boolean refill) { this.refill = refill; }
 
     public SlotRule copy() {
-        return new SlotRule(this.type, this.value);
+        SlotRule c = new SlotRule(this.type, this.value);
+        c.refill = this.refill;
+        return c;
     }
 
     /** Returns a short human-readable text representation of this rule */

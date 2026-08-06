@@ -1,17 +1,17 @@
 package com.example.inventoryorganizer.config;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.Registries;
-import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,10 +25,21 @@ public class VisualInventoryConfigScreen extends Screen {
     private final Screen parent;
     private final OrganizerConfig config;
 
+    private static String tr(String key, Object... args) { return Component.translatable(key, args).getString(); }
+
     // --- Text-based slot rules ---
     // Each slot stores a text string (e.g. "any", "empty", "g:blocks", "t:sword", "minecraft:diamond_sword")
     // This array is the SINGLE source of truth, synced to/from OrganizerConfig on load/save
     private final String[] slotTexts = new String[36];
+    // Auto-refill flag per inventory slot (middle-click toggle). Synced to OrganizerConfig on load/save.
+    private final boolean[] slotRefill = new boolean[36];
+
+    // --- Auto-switch overlay (inventory mode only) ---
+    // The "Auto switch" mode overlays a movable switch slot + a pool of storage slots onto the SAME
+    // inventory grid (so block/cg/item rules mirror between modes; only tools + these slots differ).
+    private boolean autoSwitchView = false;
+    private int switchPlaceMode = 0; // 0=none, 1=move switch slot
+    private Button switchModeBtn, placeSwitchBtn, switchSetupBtn, switchTriggerBtn, switchCopyBtn;
 
     // Equipment slot texts: [0]=head, [1]=chest, [2]=legs, [3]=feet, [4]=offhand
     private final String[] equipTexts = new String[5];
@@ -54,12 +65,14 @@ public class VisualInventoryConfigScreen extends Screen {
 
     // Palette
     private int paletteX, paletteY, paletteW, paletteH;
+    private boolean draggingScrollbar = false;
+    private static final int SCROLLBAR_WIDTH = 6;
     private int paletteScroll = 0;
     private int maxPaletteScroll = 0;
-    private final List<ButtonWidget> paletteButtons = new ArrayList<>();
+    private final List<Button> paletteButtons = new ArrayList<>();
 
     // Search
-    private TextFieldWidget searchField;
+    private EditBox searchField;
     private String lastSearch = "";
 
     // Selected palette entry (text to paint onto slots)
@@ -71,14 +84,32 @@ public class VisualInventoryConfigScreen extends Screen {
     private int lastClickedSlot = -1;
 
     // Tier Order warning
-    private ButtonWidget solveButton;
+    private Button solveButton;
+    private Button masterModeBtn;
+    // Gated by complexity mode: Ranks (deep sort/tier config) and Groups (custom-group editor) are
+    // hidden in Simple mode. Captured so updateComplexityVisibility() can flip their .visible flag.
+    private Button ranksBtn;
+    private Button groupsBtn;
+    // Deferred first-run onboarding (mode picker), consumed in extractRenderState so setScreen is safe.
+    private boolean pendingOnboarding = false;
+    // Deferred first-run Tutorial (animated walkthrough), chained after the mode picker, before the guide.
+    private boolean pendingTutorial = false;
 
     // --- Storage mode ---
     private boolean showStorage = false;
     private int activeStoragePreset = 0;
+    // When set, the screen edits this transient preset instead of one in the config list (shared-edit
+    // flow): no config tabs, and saving calls onTransientSave (which uploads it to the server).
+    private StoragePreset transientPreset = null;
+    private Runnable onTransientSave = null;
+    private boolean pendingFirstHelp = false; // open the full guide once, on first settings entry
+    private boolean inlineHelpOpen = false;   // short in-place help overlay (toggled by "?")
     private final String[] storageSlotRules = new String[54];
     private int storageSelectedSlot = -1;
-    private ButtonWidget[] storageTabBtns = new ButtonWidget[4];
+    private Button[] storageTabBtns = new Button[OrganizerConfig.DEFAULT_COUNT];
+    private Button storageProfilesBtn;
+    private Button trashTabBtn;
+    private Button bundleProfilesBtn;
 
     // All palette entries (unfiltered) and filtered list
     private final List<PaletteEntry> allEntries = new ArrayList<>();
@@ -97,19 +128,77 @@ public class VisualInventoryConfigScreen extends Screen {
     }
 
     public VisualInventoryConfigScreen(Screen parent) {
-        super(Text.literal("Inventory Config"));
+        super(Component.translatable("inventory-organizer.inventory_config.screen_title"));
         this.parent = parent;
         this.config = OrganizerConfig.get();
-        // Load text from config
+        // Show the switch as active only if both the user enabled it AND the server supports it.
+        // Never permanently overwrite the user's preference here — the runtime gate in InventorySorter
+        // already enforces plain mode when the server doesn't support auto-switch.
+        this.autoSwitchView = config.isSwitchEnabled()
+                && com.example.inventoryorganizer.warehouse.WarehouseClient.isSwitchCapable();
+        reloadSlotTextsFromConfig();
+        buildAllEntries();
+        filteredEntries = new ArrayList<>(allEntries);
+    }
+
+    /** (Re)load the inventory + equipment slot rules from the live config into the local edit arrays. */
+    private void reloadSlotTextsFromConfig() {
         for (int i = 0; i < 36; i++) {
-            slotTexts[i] = config.getSlotRule(i).toText();
+            SlotRule r = config.getInventoryRule(i, autoSwitchView); // Auto vs Plain rule set per current view
+            slotTexts[i] = r.toText();
+            slotRefill[i] = r.isRefill() && i <= 8; // refill is hotbar-only
         }
-        // Load equipment slot texts
         for (int i = 0; i < 5; i++) {
             equipTexts[i] = config.getSlotRuleByKey(EQUIP_KEYS[i]).toText();
         }
-        buildAllEntries();
-        filteredEntries = new ArrayList<>(allEntries);
+    }
+
+    /** Set right before opening a child screen (e.g. Kits) that may rewrite the config; on return,
+     *  init() re-reads the config so a loaded kit isn't clobbered by this screen's stale edit arrays. */
+    private boolean reloadOnInit = false;
+
+    /**
+     * Open the config screen directly editing the storage profile at the given list index.
+     * Used by ChestProfileListScreen so per-chest profiles are edited with the exact same UI as
+     * the built-in storage presets (modern palette, identical layout).
+     */
+    public VisualInventoryConfigScreen(Screen parent, int storageProfileIndex) {
+        this(parent);
+        this.showStorage = true;
+        int n = config.getStoragePresets().size();
+        this.activeStoragePreset = Math.max(0, Math.min(storageProfileIndex, n - 1));
+    }
+
+    /**
+     * Open the storage editor on a TRANSIENT preset (not in the config list). On save, {@code onSave}
+     * runs — used by the shared-edit flow to upload the edited rules to the server.
+     */
+    public VisualInventoryConfigScreen(Screen parent, StoragePreset transientPreset, Runnable onSave) {
+        this(parent);
+        this.showStorage = true;
+        this.transientPreset = transientPreset;
+        this.onTransientSave = onSave;
+    }
+
+    /**
+     * Build the Trash/Void editor: a transient 54-slot preset whose slot rules are the trash list.
+     * Reuses the storage editor UI (palette + grid). Saving persists the rules to {@code trash_rules}.
+     */
+    private VisualInventoryConfigScreen buildTrashEditor() {
+        StoragePreset trash = new StoragePreset("§cTrash / Void — items dropped in free mode", 54);
+        java.util.List<String> rules = config.getTrashRules();
+        for (int i = 0; i < 54; i++) trash.setSlotRule(i, i < rules.size() ? rules.get(i) : "any");
+        return new VisualInventoryConfigScreen(this, trash, () -> {
+            java.util.List<String> out = new java.util.ArrayList<>();
+            for (int i = 0; i < trash.getSize(); i++) out.add(trash.getSlotRule(i));
+            config.setTrashRules(out);
+            config.save();
+        });
+    }
+
+    /** The preset currently being edited (the transient one, or the selected config preset). */
+    private StoragePreset activeStorage() {
+        return transientPreset != null ? transientPreset : config.getStoragePresets().get(activeStoragePreset);
     }
 
     private void buildAllEntries() {
@@ -128,34 +217,11 @@ public class VisualInventoryConfigScreen extends Screen {
             }
         }
 
-        // Groups
+        // Built-in groups (weapons, tools, blocks, …) are now materialized as editable custom groups
+        // and appear in the "Custom Groups" section above — so they are no longer listed here. Only the
+        // catch-all "misc" remains a pure heuristic group (everything uncategorised).
         allEntries.add(new PaletteEntry("--- Groups ---", "", true));
-        allEntries.add(new PaletteEntry("[G] Weapons", "g:weapons", false));
-        allEntries.add(new PaletteEntry("[G] Tools", "g:tools", false));
-        allEntries.add(new PaletteEntry("[G] Armor", "g:armor", false));
-        allEntries.add(new PaletteEntry("[G] Blocks", "g:blocks", false));
-        allEntries.add(new PaletteEntry("[G] Food", "g:food", false));
-        allEntries.add(new PaletteEntry("[G] Utility", "g:utility", false));
-        allEntries.add(new PaletteEntry("[G] Valuables", "g:valuables", false));
-        allEntries.add(new PaletteEntry("[G] Potions", "g:potions", false));
-        allEntries.add(new PaletteEntry("[G] Splash Potions", "g:splash_potions", false));
-        allEntries.add(new PaletteEntry("[G] Arrows", "g:arrows", false));
         allEntries.add(new PaletteEntry("[G] Misc", "g:misc", false));
-
-        // Sub-groups
-        allEntries.add(new PaletteEntry("--- Sub-Groups ---", "", true));
-        allEntries.add(new PaletteEntry("[G] Logs",        "g:logs",     false));
-        allEntries.add(new PaletteEntry("[G] Boats",       "g:boats",    false));
-        allEntries.add(new PaletteEntry("[G] Plants",      "g:plants",   false));
-        allEntries.add(new PaletteEntry("[G] Stone",       "g:stone",    false));
-        allEntries.add(new PaletteEntry("[G] Ores",        "g:ores",     false));
-        allEntries.add(new PaletteEntry("[G] Cooked Food", "g:cooked",   false));
-        allEntries.add(new PaletteEntry("[G] Raw Food",    "g:rawfood",  false));
-        allEntries.add(new PaletteEntry("[G] Nether",      "g:nether",   false));
-        allEntries.add(new PaletteEntry("[G] End",         "g:end",      false));
-        allEntries.add(new PaletteEntry("[G] Partial Blk", "g:partial",  false));
-        allEntries.add(new PaletteEntry("[G] Redstone",    "g:redstone", false));
-        allEntries.add(new PaletteEntry("[G] Creative",    "g:creative", false));
 
         // Item types
         allEntries.add(new PaletteEntry("--- Item Types ---", "", true));
@@ -184,11 +250,18 @@ public class VisualInventoryConfigScreen extends Screen {
         allEntries.add(new PaletteEntry("[T] Spectral Arrow",   "t:spectral_arrow",   false));
         allEntries.add(new PaletteEntry("[T] Tipped Arrow",     "t:tipped_arrow",     false));
 
+        // Individual potions (by effect). A "pot:<effect>" slot rule targets that specific potion
+        // (all its variants); the Tier Order's Potion list decides which variant ranks higher.
+        allEntries.add(new PaletteEntry("--- Potions ---", "", true));
+        for (String eff : basePotionEffects()) {
+            allEntries.add(new PaletteEntry("[P] " + formatIdAsName(eff), "pot:" + eff, false));
+        }
+
         // All items from registry
         allEntries.add(new PaletteEntry("--- All Items ---", "", true));
         try {
             List<PaletteEntry> itemEntries = new ArrayList<>();
-            for (Identifier id : Registries.ITEM.getIds()) {
+            for (Identifier id : BuiltInRegistries.ITEM.keySet()) {
                 String itemId = id.toString();
                 if (itemId.equals("minecraft:air")) continue;
                 String name = formatIdAsName(id.getPath());
@@ -197,6 +270,23 @@ public class VisualInventoryConfigScreen extends Screen {
             itemEntries.sort((a, b) -> a.label.compareToIgnoreCase(b.label));
             allEntries.addAll(itemEntries);
         } catch (Exception ignored) {}
+    }
+
+    /** Unique base potion effects from the registry (long_/strong_ collapsed), sorted, for the palette. */
+    private static java.util.List<String> basePotionEffects() {
+        java.util.LinkedHashSet<String> set = new java.util.LinkedHashSet<>();
+        try {
+            for (Identifier id : BuiltInRegistries.POTION.keySet()) {
+                String p = id.getPath();
+                if (p.equals("empty")) continue;
+                if (p.startsWith("long_")) p = p.substring(5);
+                else if (p.startsWith("strong_")) p = p.substring(7);
+                set.add(p);
+            }
+        } catch (Throwable ignored) {}
+        java.util.List<String> out = new java.util.ArrayList<>(set);
+        out.sort(String::compareToIgnoreCase);
+        return out;
     }
 
     private static String formatIdAsName(String path) {
@@ -214,8 +304,20 @@ public class VisualInventoryConfigScreen extends Screen {
 
     // --- Save slotTexts back to config ---
     private void saveToConfig() {
+        int switchSlot = autoSwitchView ? config.getSwitchSlot() : -1;
         for (int i = 0; i < 36; i++) {
-            config.setSlotRule(i, SlotRule.fromText(slotTexts[i]));
+            if (i == switchSlot) { config.setInventoryRule(i, new SlotRule(), autoSwitchView); continue; }
+            SlotRule rule = SlotRule.fromText(slotTexts[i]);
+            boolean refillOn = slotRefill[i] && i <= 8; // refill is hotbar-only
+            rule.setRefill(refillOn);
+            config.setInventoryRule(i, rule, autoSwitchView);
+            // Refill flag is mode-independent slot metadata — keep both rule sets in sync so the
+            // tick handler (which reads slotRules, not autoSlotRules) always sees it.
+            SlotRule other = config.getInventoryRule(i, !autoSwitchView).copy();
+            if (other.isRefill() != refillOn) {
+                other.setRefill(refillOn);
+                config.setInventoryRule(i, other, !autoSwitchView);
+            }
         }
         // Save equipment slots
         for (int i = 0; i < 5; i++) {
@@ -236,7 +338,7 @@ public class VisualInventoryConfigScreen extends Screen {
     }
 
     private void applyFilter() {
-        String search = searchField != null ? searchField.getText().trim().toLowerCase() : "";
+        String search = searchField != null ? searchField.getValue().trim().toLowerCase() : "";
         if (search.equals(lastSearch)) return;
         lastSearch = search;
         paletteScroll = 0;
@@ -272,6 +374,15 @@ public class VisualInventoryConfigScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        this.width = GuiScaleCap.vw(this.width);
+        this.height = GuiScaleCap.vh(this.height);
+
+        // Returning from a child screen that may have rewritten the config (e.g. Kits "Load"):
+        // re-read the rules so our stale edit arrays don't overwrite the loaded data on next save.
+        if (reloadOnInit) {
+            reloadSlotTextsFromConfig();
+            reloadOnInit = false;
+        }
 
         // Dynamic slot size: scale down if screen is too narrow
         // Minimum needed: armor(1 slot) + gap + 9 grid slots + gap + minPalette(120) + margin
@@ -286,7 +397,7 @@ public class VisualInventoryConfigScreen extends Screen {
         // Responsive layout: calculate based on screen width/height
         int margin = Math.max(4, width / 70);
         gridX = margin + SLOT_W + 8;
-        gridY = height / 8;                            // top margin scales with height
+        gridY = Math.max(70, height / 8);              // top margin scales with height; min 70 to clear 3 button rows (ends y=47) + label
 
         // Palette: fills remaining space between grid and right edge
         int rightEdgeMargin = Math.max(10, width / 50);
@@ -297,117 +408,317 @@ public class VisualInventoryConfigScreen extends Screen {
         paletteY = gridY + 4;
         paletteH = height - paletteY - 44;
 
-        // Search field above palette
-        searchField = new TextFieldWidget(textRenderer, paletteX, paletteY - 16, paletteW, 14, Text.literal("Search..."));
-        searchField.setMaxLength(50);
-        searchField.setPlaceholder(Text.literal("Search items..."));
-        searchField.setChangedListener(text -> applyFilter());
-        addDrawableChild(searchField);
+        // Search field above palette. Persist the SAME instance across init() reruns (e.g. a window
+        // resize or GUI-Scale change while the screen is open) instead of replacing it \u2014 a fresh EditBox
+        // loses whatever the player had typed/focused, matching the reuse pattern already used by
+        // CustomGroupListScreen for the same reason.
+        boolean firstCreate = searchField == null;
+        boolean searchWasFocused = !firstCreate && searchField.isFocused();
+        if (firstCreate) {
+            searchField = new EditBox(font, paletteX, paletteY - 16, paletteW, 14, Component.translatable("inventory-organizer.inventory_config.search_field"));
+            searchField.setMaxLength(50);
+            searchField.setHint(Component.translatable("inventory-organizer.inventory_config.search_hint"));
+            searchField.setResponder(text -> applyFilter());
+        } else {
+            searchField.setX(paletteX);
+            searchField.setY(paletteY - 16);
+            searchField.setWidth(paletteW);
+        }
+        addRenderableWidget(searchField);
+        if (searchWasFocused) setFocused(searchField);
 
         buildAllEntries();
-        lastSearch = "\uFFFF"; // force applyFilter to rebuild filteredEntries
+        if (firstCreate) lastSearch = "\uFFFF"; // first run only: force applyFilter to build filteredEntries
         applyFilter();
         updatePaletteScroll();
         rebuildPaletteButtons();
 
-        // Bottom buttons
+        // Bottom buttons (a 7th, "Warehouse", appears when the warehouse subsystem is available).
         int btnY = height - 28;
-        int btnW = 55;
-        int totalW = btnW * 6 + 5 * 3;
+        int btnW = 60;
+        boolean whAvail = com.example.inventoryorganizer.warehouse.WarehouseClient.isAvailable();
+        int btnCount = whAvail ? 7 : 6;
+        int totalW = btnW * btnCount + (btnCount - 1) * 3;
         int startX = width / 2 - totalW / 2;
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Save"), btn -> {
-            saveToConfig();
-            MinecraftClient.getInstance().setScreen(parent);
-        }).dimensions(startX, btnY, btnW, 20).build());
+        if (transientPreset != null) {
+            // Trash / shared-edit editor: a focused screen — just Save + Back (the Kits/Names/Ranks/
+            // Warehouse buttons are config-screen tools and don't belong here). Back returns to the
+            // screen that opened it (the Storage section).
+            int tw = 70, tgap = 8;
+            int tStart = width / 2 - (tw * 2 + tgap) / 2;
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.save"), btn -> {
+                saveToConfig();
+                Minecraft.getInstance().gui.setScreen(parent);
+            }).bounds(tStart, btnY, tw, 20).build());
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.back"), btn ->
+                Minecraft.getInstance().gui.setScreen(parent)
+            ).bounds(tStart + tw + tgap, btnY, tw, 20).build());
+        } else {
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.save"), btn -> {
+                saveToConfig();
+                Minecraft.getInstance().gui.setScreen(parent);
+            }).bounds(startX, btnY, btnW, 20).build());
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Clear All"), btn -> {
-            for (int i = 0; i < 36; i++) slotTexts[i] = "any";
-            saveToConfig();
-        }).dimensions(startX + btnW + 3, btnY, btnW, 20).build());
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.clear_short"), btn -> {
+                if (showStorage) {
+                    // In storage mode, Clear must reset the CHEST/profile currently being edited — not
+                    // the player inventory.
+                    int size = activeStorage().getSize();
+                    for (int i = 0; i < size; i++) storageSlotRules[i] = "any";
+                    storageSelectedSlot = -1;
+                    saveStoragePreset();
+                } else {
+                    for (int i = 0; i < 36; i++) { slotTexts[i] = "any"; slotRefill[i] = false; }
+                    saveToConfig();
+                }
+            }).bounds(startX + btnW + 3, btnY, btnW, 20).build());
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Kits"), btn -> {
-            saveToConfig();
-            MinecraftClient.getInstance().setScreen(new KitsScreen(parent));
-        }).dimensions(startX + (btnW + 3) * 2, btnY, btnW, 20).build());
+            // Kits opens with THIS screen as parent, so Back from Kits returns here (not the grandparent).
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.kits"), btn -> {
+                saveToConfig();
+                reloadOnInit = true; // Kits may load a kit into the config; re-read it on return.
+                Minecraft.getInstance().gui.setScreen(new KitsScreen(this, autoSwitchView));
+            }).bounds(startX + (btnW + 3) * 2, btnY, btnW, 20).build());
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Names"), btn -> {
-            saveToConfig();
-            MinecraftClient.getInstance().setScreen(ConfigScreenBuilder.build((Screen)(Object)this));
-        }).dimensions(startX + (btnW + 3) * 3, btnY, btnW, 20).build());
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.names"), btn -> {
+                saveToConfig();
+                Minecraft.getInstance().gui.setScreen(ConfigScreenBuilder.build((Screen)(Object)this));
+            }).bounds(startX + (btnW + 3) * 3, btnY, btnW, 20).build());
 
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Tier Order"), btn -> {
-            saveToConfig();
-            if (showStorage) {
-                String tierKey = "tier_order_storage_" + activeStoragePreset;
-                int sRows = config.getStoragePresets().get(activeStoragePreset).getSize() / 9;
-                String[] storageRulesCopy = java.util.Arrays.copyOf(storageSlotRules, sRows * 9);
-                MinecraftClient.getInstance().setScreen(
-                    new SortingOrderConfigScreen(this, storageRulesCopy, new String[]{"any","any","any","any","any"}, tierKey, true, sRows));
-            } else {
-                MinecraftClient.getInstance().setScreen(new SortingOrderConfigScreen(this, slotTexts, equipTexts));
+            ranksBtn = addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.ranks"), btn -> {
+                saveToConfig();
+                if (showStorage) {
+                    // Key tiers by stable profile id (not list index) so StorageSorter reads the same data.
+                    String tierKey = "tier_order_storage_" + activeStorage().getId();
+                    int sRows = activeStorage().getSize() / 9;
+                    String[] storageRulesCopy = java.util.Arrays.copyOf(storageSlotRules, sRows * 9);
+                    Minecraft.getInstance().gui.setScreen(
+                        new SortingOrderConfigScreen(this, storageRulesCopy, new String[]{"any","any","any","any","any"}, tierKey, true, sRows));
+                } else {
+                    Minecraft.getInstance().gui.setScreen(new SortingOrderConfigScreen(this, slotTexts, equipTexts));
+                }
+            }).bounds(startX + (btnW + 3) * 4, btnY, btnW, 20).build());
+
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.back"), btn -> {
+                Minecraft.getInstance().gui.setScreen(parent);
+            }).bounds(startX + (btnW + 3) * 5, btnY, btnW, 20).build());
+
+            if (whAvail) {
+                addRenderableWidget(StyledButton.styledBuilder(
+                    Component.translatable("inventory-organizer.warehouse.button"), btn -> {
+                        saveToConfig();
+                        Minecraft.getInstance().gui.setScreen(new com.example.inventoryorganizer.warehouse.WarehouseMapScreen(this));
+                    }).bounds(startX + (btnW + 3) * 6, btnY, btnW, 20).build());
             }
-        }).dimensions(startX + (btnW + 3) * 4, btnY, btnW, 20).build());
-
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Back"), btn -> {
-            MinecraftClient.getInstance().setScreen(parent);
-        }).dimensions(startX + (btnW + 3) * 5, btnY, btnW, 20).build());
+        }
 
         // Tier Order warning + Solve button (shown when rules are set but tier order is not configured)
-        solveButton = StyledButton.styledBuilder(Text.literal("Solve"), btn -> {
+        solveButton = StyledButton.styledBuilder(Component.translatable("inventory-organizer.inventory_config.solve"), btn -> {
             config.getPreferences().remove("tier_order");
             config.applyDefaultTierOrder();
             config.save();
-        }).dimensions(startX, btnY - 18, 55, 14).build();
+        }).bounds(startX, btnY - 18, 55, 14).build();
         solveButton.visible = false;
-        addDrawableChild(solveButton);
+        addRenderableWidget(solveButton);
 
-        // Guide toggle button (top-right corner)
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("?"), btn -> {
-            config.setShowHelp(!config.isShowHelp());
-            config.save();
-        }).dimensions(width - 24, 4, 20, 18).build());
+        // "?" toggles a short, in-place help overlay for THIS screen (quick tips without leaving).
+        // The "Guide" button still opens the full, detailed HelpScreen.
+        addRenderableWidget(StyledButton.styledBuilder(Component.literal("?"), btn ->
+            inlineHelpOpen = !inlineHelpOpen
+        ).bounds(width - 24, 4, 20, 18).build());
+        if (transientPreset == null) {
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.guide"), btn ->
+                Minecraft.getInstance().gui.setScreen(new HelpScreen(this))
+            ).bounds(width - 24 - 4 - 52, 4, 52, 18).build());
+        }
+
+        // "Special" button — opens the Special Settings sub-screen (sort action + whitelist).
+        // Placed LEFT of the Guide button (was overlapping it, so clicks on the right half of
+        // "Special" were caught by Guide and opened the guide instead of the settings).
+        // Hidden in the focused Trash editor (transient) — it's a config-wide tool.
+        if (transientPreset == null) {
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.special"), btn -> {
+                saveToConfig();
+                Minecraft.getInstance().gui.setScreen(new SpecialSettingsScreen(this));
+            }).bounds(width - 140, 4, 56, 18).build());
+        }
+
+        // Master quick-switch — a fast preset that flips all server-sensitive toggles at once.
+        // The individual toggles in Special Settings still work; this is just a shortcut.
+        // Locked during fight mode. Hidden in the focused Trash editor (transient).
+        if (transientPreset == null) {
+            masterModeBtn = StyledButton.styledBuilder(Component.literal(masterModeLabel()), btn -> {
+                if (com.example.inventoryorganizer.FightModeTracker.isCombatActive()) return; // locked in fight
+                if (isServerFriendlyPreset()) {
+                    // Currently Server-Friendly → switch to Free preset.
+                    config.setKeybindMode("free");
+                    config.setDeathSortEnabled(true);
+                } else {
+                    // Free or Custom → switch to Server-Friendly preset.
+                    config.setKeybindMode("inventory_only");
+                    config.setDeathSortEnabled(false);
+                }
+                config.save();
+            }).bounds(width - 244, 4, 100, 18).build();
+            addRenderableWidget(masterModeBtn);
+        }
 
         // --- Mode toggle buttons: [Inv] [Storage] [Groups] at top-left ---
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Inv"),
-            btn -> switchMode(false)
-        ).dimensions(4, 4, 36, 13).build());
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Storage"),
-            btn -> switchMode(true)
-        ).dimensions(43, 4, 52, 13).build());
-        addDrawableChild(StyledButton.styledBuilder(Text.literal("Groups"),
-            btn -> { saveToConfig(); MinecraftClient.getInstance().setScreen(new CustomGroupListScreen(this)); }
-        ).dimensions(98, 4, 52, 13).build());
+        // Hidden in the focused Trash editor (transient): there are no Storage tabs there, so switching
+        // would drop you into an empty, tab-less Storage view. Use Back to leave the Trash editor.
+        if (transientPreset == null) {
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.inv"),
+                btn -> switchMode(false)
+            ).bounds(4, 4, 38, 13).build());
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.storage"),
+                btn -> switchMode(true)
+            ).bounds(44, 4, 62, 13).build());
+            groupsBtn = addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.groups"),
+                btn -> { saveToConfig(); Minecraft.getInstance().gui.setScreen(new CustomGroupListScreen(this)); }
+            ).bounds(108, 4, 60, 13).build());
 
-        // --- Storage preset tab buttons (aligned to storage panel, no armor column) ---
+            // --- Auto-switch mode toggle + placement controls (inventory mode only) ---
+            autoSwitchView = config.isSwitchEnabled() && com.example.inventoryorganizer.warehouse.WarehouseClient.isSwitchCapable();
+            switchModeBtn = addRenderableWidget(StyledButton.styledBuilder(switchModeLabel(),
+                btn -> {
+                    saveToConfig();                 // persist the current view's edits first
+                    autoSwitchView = !autoSwitchView;
+                    config.setSwitchEnabled(autoSwitchView);
+                    if (autoSwitchView) ensureSwitchDefaults();
+                    config.save();
+                    reloadSlotTextsFromConfig();     // load the other rule set into the grid
+                    switchPlaceMode = 0;
+                    switchModeBtn.setMessage(switchModeLabel());
+                    if (switchCopyBtn != null) switchCopyBtn.setMessage(switchCopyLabel());
+                    updateSwitchWidgetsVisibility();
+                }).bounds(172, 4, 92, 13).build());
+            placeSwitchBtn = addRenderableWidget(StyledButton.styledBuilder(
+                Component.translatable("inventory-organizer.switch.move_switch"),
+                btn -> switchPlaceMode = (switchPlaceMode == 1 ? 0 : 1)).bounds(4, 19, 120, 13).build());
+            switchSetupBtn = addRenderableWidget(StyledButton.styledBuilder(
+                Component.translatable("inventory-organizer.switch.setup"),
+                btn -> { saveToConfig(); Minecraft.getInstance().gui.setScreen(new SwitchRanksScreen(this)); })
+                .bounds(128, 19, 120, 13).build());
+            switchTriggerBtn = addRenderableWidget(StyledButton.styledBuilder(switchTriggerLabel(),
+                btn -> {
+                    boolean wasAuto = config.isSwitchTriggerAuto();
+                    config.setSwitchTrigger(wasAuto ? "button" : "auto");
+                    config.save();
+                    btn.setMessage(switchTriggerLabel());
+                }).bounds(4, 34, 120, 13).build());
+            switchCopyBtn = addRenderableWidget(StyledButton.styledBuilder(switchCopyLabel(),
+                btn -> {
+                    saveToConfig();
+                    config.copyRulesToOtherMode(autoSwitchView);
+                    config.save();
+                    reloadSlotTextsFromConfig();
+                }).bounds(128, 34, 120, 13).build());
+            updateSwitchWidgetsVisibility();
+        }
+
+        // --- Storage default tabs + Profiles + Trash (aligned to storage panel, no armor column) ---
+        // Only the three protected defaults are tabs here ("the basics"); per-chest profiles are
+        // managed in ChestProfileListScreen via the "Profiles…" button. The Trash/Void editor lives
+        // here too (under Storage) — it's a storage-style 54-slot rule grid, so it belongs with storage.
         int panelLx = gridX - 8;
         int panelTy = gridY - 20;
         int panelTw = 9 * SLOT_W + 16;
-        int nTabs = config.getStoragePresets().size();
-        storageTabBtns = new ButtonWidget[nTabs];
-        int tabW3 = panelTw / nTabs - 2;
-        for (int i = 0; i < nTabs; i++) {
-            final int idx = i;
-            String tabLabel = config.getStoragePresets().get(i).getName();
-            storageTabBtns[i] = addDrawableChild(StyledButton.styledBuilder(
-                Text.literal(tabLabel),
-                btn -> { saveStoragePreset(); activeStoragePreset = idx; loadStoragePreset(); }
-            ).dimensions(panelLx + i * (tabW3 + 2), panelTy - 15, tabW3, 13).build());
+        int nCells = OrganizerConfig.DEFAULT_COUNT + 3; // DEFAULT_COUNT default tabs + Profiles + Bundles + Trash
+        storageTabBtns = new Button[OrganizerConfig.DEFAULT_COUNT];
+        int tabW3 = panelTw / nCells - 2;
+        // Shared-edit (transient) mode: no config tabs — there's exactly one profile to edit.
+        if (transientPreset == null) {
+            for (int i = 0; i < OrganizerConfig.DEFAULT_COUNT; i++) {
+                final int idx = i;
+                String tabLabel = config.getStoragePresets().get(i).getName();
+                storageTabBtns[i] = addRenderableWidget(StyledButton.styledBuilder(
+                    Component.literal(tabLabel),
+                    btn -> { saveStoragePreset(); activeStoragePreset = idx; loadStoragePreset(); }
+                ).bounds(panelLx + i * (tabW3 + 2), panelTy - 15, tabW3, 13).build());
+            }
+            storageProfilesBtn = addRenderableWidget(StyledButton.styledBuilder(
+                Component.translatable("inventory-organizer.profile.profiles_btn"),
+                btn -> { saveStoragePreset(); Minecraft.getInstance().gui.setScreen(new ChestProfileListScreen(this)); }
+            ).bounds(panelLx + OrganizerConfig.DEFAULT_COUNT * (tabW3 + 2), panelTy - 15, tabW3, 13).build());
+            // Bundle Profiles editor
+            bundleProfilesBtn = addRenderableWidget(StyledButton.styledBuilder(
+                Component.translatable("inventory-organizer.button.bundle_profiles"),
+                btn -> { saveStoragePreset(); Minecraft.getInstance().gui.setScreen(new BundleProfileListScreen(this)); }
+            ).bounds(panelLx + (OrganizerConfig.DEFAULT_COUNT + 1) * (tabW3 + 2), panelTy - 15, tabW3, 13).build());
+            // Trash/Void editor — only reachable from the Storage section now.
+            trashTabBtn = addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.button.trash"),
+                btn -> { saveToConfig(); Minecraft.getInstance().gui.setScreen(buildTrashEditor()); }
+            ).bounds(panelLx + (OrganizerConfig.DEFAULT_COUNT + 2) * (tabW3 + 2), panelTy - 15, tabW3, 13).build());
         }
 
         // Load storage data and apply initial visibility
         loadStoragePreset();
         updateStorageWidgetsVisibility();
+        updateComplexityVisibility();
 
+        // Very first launch → ask which complexity mode to use (handled in extractRenderState so
+        // setScreen is safe). Takes precedence over the feature guide; the guide then shows on the
+        // reopened hub. Never triggered in the transient Trash editor.
+        if (transientPreset == null && !config.isFirstRunDone()) pendingOnboarding = true;
+
+        // First launch → auto-play the animated Tutorial once (chained after the mode picker, before
+        // the text guide). Replayable anytime via the Tutorial button.
+        if (transientPreset == null && !config.isTutorialSeen()) pendingTutorial = true;
+
+        // First time the settings are opened, drop the user into the full feature guide.
+        if (transientPreset == null && !config.isHelpSeen()) pendingFirstHelp = true;
+    }
+
+    /** Simple mode hides the deep Ranks and custom-Group editors; Advanced/Expert show them. */
+    private void updateComplexityVisibility() {
+        boolean showAdvanced = !config.isSimpleMode();
+        if (ranksBtn != null) ranksBtn.visible = showAdvanced;
+        if (groupsBtn != null) groupsBtn.visible = showAdvanced;
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        super.render(context, mouseX, mouseY, delta);
+    public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) {
+            mouseX = (int) GuiScaleCap.mx(mouseX);
+            mouseY = (int) GuiScaleCap.my(mouseY);
+            context.pose().pushMatrix();
+            context.pose().scale(guiScaleCapF);
+        }
+        super.extractRenderState(context, mouseX, mouseY, delta);
+
+        // Very first launch → show the complexity-mode picker before anything else.
+        if (pendingOnboarding) {
+            pendingOnboarding = false;
+            Minecraft.getInstance().gui.setScreen(new ComplexityOnboardingScreen(this));
+            if (guiScaleCapF != 1f) context.pose().popMatrix();
+            return;
+        }
+
+        // First launch → play the animated Tutorial once (after the mode picker, before the guide).
+        if (pendingTutorial) {
+            pendingTutorial = false;
+            config.setTutorialSeen(true);
+            config.save();
+            Minecraft.getInstance().gui.setScreen(new TutorialScreen(this));
+            if (guiScaleCapF != 1f) context.pose().popMatrix();
+            return;
+        }
+
+        // First settings entry → open the full guide once (done here, not in init, so setScreen is safe).
+        if (pendingFirstHelp) {
+            pendingFirstHelp = false;
+            config.setHelpSeen(true);
+            config.save();
+            Minecraft.getInstance().gui.setScreen(new HelpScreen(this));
+            if (guiScaleCapF != 1f) context.pose().popMatrix();
+            return;
+        }
 
         if (showStorage) {
             // Storage mode: 12px margin sides/bottom, +12px on top for label at gridY-12
-            int storageRows = config.getStoragePresets().get(activeStoragePreset).getSize() / 9;
+            int storageRows = activeStorage().getSize() / 9;
             int panelLeft = gridX - 12;
             int panelTop = gridY - 24;
             int panelW2 = 9 * SLOT_W + 24;
@@ -426,23 +737,57 @@ public class VisualInventoryConfigScreen extends Screen {
         drawDecoratedBorder(context, paletteX - 8, paletteY - 24, paletteW + 16, paletteH + 32);
 
         String modeTitle = showStorage
-            ? ("\u00a7eStorage: \u00a7f" + config.getStoragePresets().get(activeStoragePreset).getName())
+            ? ("\u00a7eStorage: \u00a7f" + activeStorage().getName())
             : "Inventory Slot Config";
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal(modeTitle), width / 2, 4, 0xFFFFFFFF);
-        // Mode indicator highlights
-        if (!showStorage) context.fill(4, 4, 40, 17, 0xFF005588);
-        else context.fill(43, 4, 95, 17, 0xFF005588);
-        // Storage tab highlight (aligned to storage panel)
-        if (showStorage) {
+        context.centeredText(font, Component.literal(modeTitle), width / 2, 4, 0xFFFFFFFF);
+        // Mode indicator — bright border around the active tab (NOT a solid fill, which
+        // would cover the button text since super.extractRenderState renders widgets first).
+        // Skipped in the Trash editor (transient) where the top tabs are hidden.
+        if (transientPreset == null) {
+            int hx1, hx2;
+            // Match the actual top-tab bounds: Inv (x=4,w=38), Storage (x=44,w=62).
+            if (!showStorage) { hx1 = 4;  hx2 = 42; }
+            else              { hx1 = 44; hx2 = 106; }
+            int hy1 = 4, hy2 = 17;
+            int color = 0xFF00AAFF;
+            context.fill(hx1,     hy1,     hx2,     hy1 + 1, color); // top
+            context.fill(hx1,     hy2 - 1, hx2,     hy2,     color); // bottom
+            context.fill(hx1,     hy1,     hx1 + 1, hy2,     color); // left
+            context.fill(hx2 - 1, hy1,     hx2,     hy2,     color); // right
+        }
+
+        // Storage tab highlight (aligned to storage panel) — only for the default tabs.
+        // A per-chest profile (index >= DEFAULT_COUNT) is being edited "off-tab"; its name is shown
+        // in the mode title instead, so we skip the highlight to avoid drawing it off-screen.
+        if (showStorage && transientPreset == null && activeStoragePreset < OrganizerConfig.DEFAULT_COUNT) {
             int panelLx2 = gridX - 8;
             int panelTy2 = gridY - 20;
             int panelTw2 = 9 * SLOT_W + 16;
-            int tw2 = panelTw2 / config.getStoragePresets().size() - 2;
+            // Must match the storage-tab layout built above: DEFAULT_COUNT defaults + Profiles +
+            // Bundles + Trash (nCells there). This used to be hardcoded to "+ 2" (pre-dating the Bundle
+            // Profiles button) and had drifted out of sync with the real "+ 3" tab layout, so the
+            // highlight border landed on the wrong tab for every index past the first.
+            int nCells2 = OrganizerConfig.DEFAULT_COUNT + 3;
+            int tw2 = panelTw2 / nCells2 - 2;
             int hx = panelLx2 + activeStoragePreset * (tw2 + 2);
-            context.fill(hx - 1, panelTy2 - 16, hx + tw2 + 1, panelTy2, 0xFF55AAFF);
-            context.fill(hx, panelTy2 - 15, hx + tw2, panelTy2, 0xFF223355);
+            // Draw a BORDER (not a solid fill) like the top tabs above: super.extractRenderState renders
+            // the tab button first, so a solid fill here would cover the tab's label.
+            int hy1 = panelTy2 - 16, hy2 = panelTy2 - 1, hcol = 0xFF55AAFF;
+            context.fill(hx - 1,   hy1,     hx + tw2 + 1, hy1 + 1, hcol); // top
+            context.fill(hx - 1,   hy2 - 1, hx + tw2 + 1, hy2,     hcol); // bottom
+            context.fill(hx - 1,   hy1,     hx,           hy2,     hcol); // left
+            context.fill(hx + tw2, hy1,     hx + tw2 + 1, hy2,     hcol); // right
         }
-        context.drawTextWithShadow(textRenderer, Text.literal("Select a rule from the list, then click a slot to assign it."), width / 2 - 150, 16, 0xFFAAAAAA);
+        context.text(font, Component.translatable("inventory-organizer.inventory_config.select_rule_hint"), width / 2 - 150, 16, 0xFFAAAAAA);
+        // (The old "full inventory may be buggy" warning was removed from the slot menu — the rebuilt
+        // verify+retry sorter handles a full inventory reliably and shows a precise "no room for X" message
+        // only when an item genuinely can't be placed.)
+
+        // Keep the master switch label/lock state live (fight mode counts down each frame).
+        if (masterModeBtn != null) {
+            masterModeBtn.setMessage(Component.literal(masterModeLabel()));
+            masterModeBtn.active = !com.example.inventoryorganizer.FightModeTracker.isCombatActive();
+        }
 
         if (showStorage) {
             drawStorageGrid(context, mouseX, mouseY);
@@ -450,25 +795,15 @@ public class VisualInventoryConfigScreen extends Screen {
             drawInventoryGrid(context, mouseX, mouseY);
         }
         drawPaletteExtras(context, mouseX, mouseY);
-
-        // Guide overlay (drawn last so it's on top of everything)
-        if (config.isShowHelp()) drawGuideOverlay(context);
+        drawInlineHelp(context); // short in-place tips (toggled by "?"); full guide is the Guide button
 
         // Show selected rule as cursor text
         if (selectedLabel != null) {
-            context.drawTextWithShadow(textRenderer, Text.literal(selectedLabel),
+            context.text(font, Component.literal(selectedLabel),
                     mouseX + 12, mouseY - 4, 0xFF55FF55);
         }
 
         drawSlotTooltip(context, mouseX, mouseY);
-
-        // Check search field changes every frame
-        if (searchField != null) {
-            String current = searchField.getText().trim().toLowerCase();
-            if (!current.equals(lastSearch)) {
-                applyFilter();
-            }
-        }
 
         // Tier Order warning: show when rules are configured but no tier assignments are saved
         boolean needsWarning = hasMeaningfulRules() && config.getPreference("tier_order").length == 0;
@@ -478,10 +813,12 @@ public class VisualInventoryConfigScreen extends Screen {
             int totalW2 = btnW2 * 6 + 5 * 3;
             int warnX = width / 2 - totalW2 / 2;
             int warnY = height - 28 - 18;
-            context.drawTextWithShadow(textRenderer,
-                Text.literal("\u26a0 Tier Order is not configured \u2013 set it up or click Solve!"),
+            context.text(font,
+                Component.translatable("inventory-organizer.inventory_config.tier_order_warning"),
                 warnX + 58, warnY + 3, 0xFFFF8800);
         }
+
+        if (guiScaleCapF != 1f) context.pose().popMatrix();
     }
 
     private boolean hasMeaningfulRules() {
@@ -494,12 +831,12 @@ public class VisualInventoryConfigScreen extends Screen {
         return false;
     }
 
-    private void drawStorageGrid(DrawContext context, int mouseX, int mouseY) {
-        StoragePreset preset = config.getStoragePresets().get(activeStoragePreset);
+    private void drawStorageGrid(GuiGraphicsExtractor context, int mouseX, int mouseY) {
+        StoragePreset preset = activeStorage();
         int size = preset.getSize();
         int rows = size / 9;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal(preset.getName() + " (" + size + " slots)"), gridX, gridY - 12, 0xFFFFFF55);
+        context.text(font,
+            Component.literal(preset.getName() + " (" + size + " slots)"), gridX, gridY - 12, 0xFFFFFF55);
         for (int row = 0; row < rows; row++) {
             for (int col = 0; col < 9; col++) {
                 int slot = row * 9 + col;
@@ -508,7 +845,7 @@ public class VisualInventoryConfigScreen extends Screen {
         }
     }
 
-    private void drawStorageSlot(DrawContext context, int x, int y, int slot, int mouseX, int mouseY) {
+    private void drawStorageSlot(GuiGraphicsExtractor context, int x, int y, int slot, int mouseX, int mouseY) {
         String rule = storageSlotRules[slot];
         boolean hovered = mouseX >= x && mouseX < x + SLOT_W && mouseY >= y && mouseY < y + SLOT_H;
         boolean selected = slot == storageSelectedSlot;
@@ -517,32 +854,32 @@ public class VisualInventoryConfigScreen extends Screen {
         drawMCSlot(context, x, y, innerColor, hovered, hasRule);
         if (selected) {
             context.fill(x + 3, y + 3, x + SLOT_W - 3, y + SLOT_H - 3, 0x4400AAFF);
-            context.drawHorizontalLine(x + 2, x + SLOT_W - 3, y + 2, 0xFF00AAFF);
-            context.drawHorizontalLine(x + 2, x + SLOT_W - 3, y + SLOT_H - 3, 0xFF00AAFF);
-            context.drawVerticalLine(x + 2, y + 2, y + SLOT_H - 3, 0xFF00AAFF);
-            context.drawVerticalLine(x + SLOT_W - 3, y + 2, y + SLOT_H - 3, 0xFF00AAFF);
+            context.horizontalLine(x + 2, x + SLOT_W - 3, y + 2, 0xFF00AAFF);
+            context.horizontalLine(x + 2, x + SLOT_W - 3, y + SLOT_H - 3, 0xFF00AAFF);
+            context.verticalLine(x + 2, y + 2, y + SLOT_H - 3, 0xFF00AAFF);
+            context.verticalLine(x + SLOT_W - 3, y + 2, y + SLOT_H - 3, 0xFF00AAFF);
         }
-        Integer tier = config.getStorageTier(activeStoragePreset, slot);
+        Integer tier = config.getStorageTier(activeStorage().getId(), slot);
         if (tier != null) {
-            context.drawTextWithShadow(textRenderer, Text.literal("\u00a7a" + tier), x + 2, y + 2, 0xFF55FF55);
+            context.text(font, Component.literal("\u00a7a" + tier), x + 2, y + 2, 0xFF55FF55);
         }
         ItemStack icon = getIconForText(rule);
-        if (!icon.isEmpty()) context.drawItem(icon, x + (SLOT_W - 16) / 2, y + (SLOT_H - 16) / 2);
+        if (!icon.isEmpty()) VisualInventoryConfigScreen.drawItemIcon(context, icon, x + (SLOT_W - 16) / 2, y + (SLOT_H - 16) / 2);
         String displayText = getDisplayText(rule);
         int maxTextW = SLOT_W - 4;
-        if (textRenderer.getWidth(displayText) > maxTextW) {
-            while (displayText.length() > 1 && textRenderer.getWidth(displayText + ".") > maxTextW)
+        if (font.width(displayText) > maxTextW) {
+            while (displayText.length() > 1 && font.width(displayText + ".") > maxTextW)
                 displayText = displayText.substring(0, displayText.length() - 1);
             displayText += ".";
         }
-        int tw = textRenderer.getWidth(displayText);
+        int tw = font.width(displayText);
         int textColor = rule.equals("empty") ? 0xFFAA4444 : rule.equals("any") ? 0xFF888888 : 0xFF5599FF;
-        context.drawTextWithShadow(textRenderer, Text.literal(displayText),
+        context.text(font, Component.literal(displayText),
             x + (SLOT_W - tw) / 2, y + 27, textColor);
     }
 
     private int getStorageSlotAt(int mx, int my) {
-        int size = config.getStoragePresets().get(activeStoragePreset).getSize();
+        int size = activeStorage().getSize();
         int rows = size / 9;
         for (int row = 0; row < rows; row++) {
             for (int col = 0; col < 9; col++) {
@@ -555,17 +892,51 @@ public class VisualInventoryConfigScreen extends Screen {
     }
 
     private void loadStoragePreset() {
-        StoragePreset p = config.getStoragePresets().get(activeStoragePreset);
+        StoragePreset p = activeStorage();
         int size = p.getSize();
         for (int i = 0; i < 54; i++) storageSlotRules[i] = i < size ? p.getSlotRule(i) : "any";
         storageSelectedSlot = -1;
     }
 
     private void saveStoragePreset() {
-        StoragePreset p = config.getStoragePresets().get(activeStoragePreset);
+        StoragePreset p = activeStorage();
         int size = p.getSize();
         for (int i = 0; i < size; i++) p.setSlotRule(i, storageSlotRules[i]);
-        config.save();
+        if (transientPreset != null) {
+            // Shared-edit: don't persist to local config; hand the edited rules to the save callback.
+            if (onTransientSave != null) onTransientSave.run();
+        } else {
+            config.save();
+        }
+    }
+
+    /** True when the toggles are exactly the Server-Friendly preset. */
+    private boolean isServerFriendlyPreset() {
+        return "inventory_only".equals(config.getKeybindMode()) && !config.isDeathSortEnabled();
+    }
+
+    /** True when the toggles are exactly the Free preset. */
+    private boolean isFreePreset() {
+        return "free".equals(config.getKeybindMode()) && config.isDeathSortEnabled();
+    }
+
+    /** Dynamic label for the master quick-switch (reflects fight mode + environment + custom state). */
+    private String masterModeLabel() {
+        if (com.example.inventoryorganizer.FightModeTracker.isCombatActive()) {
+            long s = (com.example.inventoryorganizer.FightModeTracker.remainingMs() / 1000) + 1;
+            return "§cFight: SF " + s + "s";
+        }
+        if (com.example.inventoryorganizer.FightModeTracker.isSfForced()) {
+            // Public server → Server-Friendly is forced permanently (no countdown).
+            return "§eForced SF";
+        }
+        if (isFreePreset()) {
+            return com.example.inventoryorganizer.ServerEnvironment.canUseFree()
+                    ? "§aQuick: Free"
+                    : "§eQuick: Free*";
+        }
+        if (isServerFriendlyPreset()) return "Quick: SF";
+        return "§7Quick: Custom";
     }
 
     private void switchMode(boolean toStorage) {
@@ -580,11 +951,127 @@ public class VisualInventoryConfigScreen extends Screen {
     }
 
     private void updateStorageWidgetsVisibility() {
-        for (ButtonWidget tab : storageTabBtns) { if (tab != null) tab.visible = showStorage; }
+        for (Button tab : storageTabBtns) { if (tab != null) tab.visible = showStorage; }
+        if (storageProfilesBtn != null) storageProfilesBtn.visible = showStorage;
+        if (bundleProfilesBtn != null) bundleProfilesBtn.visible = showStorage;
+        if (trashTabBtn != null) trashTabBtn.visible = showStorage; // Trash lives under Storage now
+        updateSwitchWidgetsVisibility();
     }
 
-    private void drawInventoryGrid(DrawContext context, int mouseX, int mouseY) {
-        context.drawTextWithShadow(textRenderer, Text.literal("Inventory (slots 9-35)"), gridX, gridY - 12, 0xFFFFFF55);
+    /** Auto-switch controls live in inventory mode; the placement buttons only when Auto switch is on. */
+    private void updateSwitchWidgetsVisibility() {
+        boolean serverPresent = com.example.inventoryorganizer.warehouse.WarehouseClient.isSwitchCapable();
+        boolean inv = !showStorage && serverPresent;
+        if (switchModeBtn != null) switchModeBtn.visible = inv;
+        boolean place = inv && autoSwitchView;
+        if (placeSwitchBtn != null) placeSwitchBtn.visible = place;
+        if (switchSetupBtn != null) switchSetupBtn.visible = place;
+        if (switchTriggerBtn != null) switchTriggerBtn.visible = place;
+        if (switchCopyBtn != null) switchCopyBtn.visible = inv;
+    }
+
+    private net.minecraft.network.chat.Component switchModeLabel() {
+        return Component.translatable(autoSwitchView
+                ? "inventory-organizer.switch.mode_auto" : "inventory-organizer.switch.mode_plain");
+    }
+
+    private net.minecraft.network.chat.Component switchTriggerLabel() {
+        return Component.translatable(config.isSwitchTriggerAuto()
+                ? "inventory-organizer.switch.trigger_auto" : "inventory-organizer.switch.trigger_button");
+    }
+
+    private net.minecraft.network.chat.Component switchCopyLabel() {
+        // "Copy → Plain" when viewing Auto, "Copy → Auto" when viewing Plain
+        return Component.translatable(autoSwitchView
+                ? "inventory-organizer.switch.copy_to_plain" : "inventory-organizer.switch.copy_to_auto");
+    }
+
+    /** Ensure the switch slot exists + the tool groups are seeded when Auto switch is enabled. */
+    private void ensureSwitchDefaults() {
+        if (config.getSwitchSlot() < 0 || config.getSwitchSlot() > 8) config.setSwitchSlot(8);
+        config.materializeSwitchGroupsOnce();
+    }
+
+    /** Top-left pixel of an inventory slot (0-8 hotbar, 9-35 main grid); null if out of range. */
+    private int[] switchSlotXY(int slot) {
+        if (slot >= 9 && slot < 36) {
+            int r = (slot - 9) / 9, c = (slot - 9) % 9;
+            return new int[]{gridX + c * SLOT_W, gridY + r * SLOT_H};
+        }
+        if (slot >= 0 && slot < 9) {
+            int hotbarY = gridY + 3 * SLOT_H + 14;
+            return new int[]{gridX + slot * SLOT_W, hotbarY};
+        }
+        return null;
+    }
+
+    private void drawRoleMarker(GuiGraphicsExtractor context, int slot, int color, String letter) {
+        int[] xy = switchSlotXY(slot);
+        if (xy == null) return;
+        int x = xy[0], y = xy[1];
+        context.horizontalLine(x, x + SLOT_W - 1, y, color);
+        context.horizontalLine(x, x + SLOT_W - 1, y + 1, color);
+        context.horizontalLine(x, x + SLOT_W - 1, y + SLOT_H - 1, color);
+        context.horizontalLine(x, x + SLOT_W - 1, y + SLOT_H - 2, color);
+        context.verticalLine(x, y, y + SLOT_H - 1, color);
+        context.verticalLine(x + 1, y, y + SLOT_H - 1, color);
+        context.verticalLine(x + SLOT_W - 1, y, y + SLOT_H - 1, color);
+        context.verticalLine(x + SLOT_W - 2, y, y + SLOT_H - 1, color);
+        context.text(font, Component.literal(letter), x + 2, y + 2, color);
+    }
+
+    /** Resolve a quick-help line to the active language. */
+    private static String qh(String key) {
+        return Component.translatable("inventory-organizer.qhelp." + key).getString();
+    }
+
+    /** Short, in-place help overlay for this screen (toggled by "?"); the full guide is its own screen. */
+    private void drawInlineHelp(GuiGraphicsExtractor context) {
+        if (!inlineHelpOpen) return;
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        if (showStorage) {
+            lines.add(qh("storage.head"));
+            lines.add(qh("storage.l1"));
+            lines.add(qh("storage.l2"));
+            lines.add(qh("storage.l3"));
+            lines.add(qh("storage.l4"));
+            lines.add(qh("storage.l5"));
+        } else {
+            lines.add(qh("inv.head"));
+            lines.add(qh("inv.l1"));
+            lines.add(qh("inv.l2"));
+            lines.add(qh("inv.l3"));
+            lines.add(qh("inv.l4"));
+            lines.add(qh("inv.l5"));
+        }
+        lines.add("");
+        lines.add(qh("footer"));
+
+        // Word-wrap every line to the panel's inner width so nothing spills out the side
+        // (some tip lines + the warning are long, and translations are longer still).
+        int w = Math.min(360, width - 20);
+        int inner = w - 16;
+        java.util.List<net.minecraft.util.FormattedCharSequence> wrapped = new java.util.ArrayList<>();
+        for (String s : lines) {
+            if (s.isEmpty()) { wrapped.add(net.minecraft.util.FormattedCharSequence.EMPTY); continue; }
+            wrapped.addAll(font.split(Component.literal(s), inner));
+        }
+        int h = wrapped.size() * 11 + 12;
+        int x = (width - w) / 2;
+        int y = (height - h) / 2;
+        // Dim the screen behind, then a bordered panel.
+        context.fill(0, 0, width, height, 0x88000000);
+        context.fill(x - 2, y - 2, x + w + 2, y + h + 2, 0xFF3A3A5A);
+        context.fill(x, y, x + w, y + h, 0xFF161622);
+        int ly = y + 6;
+        for (net.minecraft.util.FormattedCharSequence seq : wrapped) {
+            context.text(font, seq, x + 8, ly, 0xFFFFFFFF);
+            ly += 11;
+        }
+    }
+
+    private void drawInventoryGrid(GuiGraphicsExtractor context, int mouseX, int mouseY) {
+        context.text(font, Component.translatable("inventory-organizer.tier_order.inventory_label"), gridX, gridY - 12, 0xFFFFFF55);
 
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
@@ -594,25 +1081,37 @@ public class VisualInventoryConfigScreen extends Screen {
         }
 
         int hotbarY = gridY + 3 * SLOT_H + 14;
-        context.drawTextWithShadow(textRenderer, Text.literal("Hotbar (slots 0-8)"), gridX, hotbarY - 12, 0xFFFFFF55);
+        context.text(font, Component.translatable("inventory-organizer.tier_order.hotbar_label"), gridX, hotbarY - 12, 0xFFFFFF55);
         for (int col = 0; col < 9; col++) {
             drawSlot(context, gridX + col * SLOT_W, hotbarY, col, mouseX, mouseY);
         }
 
+        // Always-visible auto-refill hint (so it's discoverable without opening the help guide).
+        context.text(font, Component.translatable("inventory-organizer.inventory_config.autorefill_hint"),
+                gridX, gridY + 3 * SLOT_H + 14 + SLOT_H + 3, 0xFFAAAAAA);
+
         // Armor slots (left of grid): helmet, chestplate, leggings, boots
         int armorX = gridX - SLOT_W - 8;
-        context.drawTextWithShadow(textRenderer, Text.literal("Armor"), armorX, gridY - 12, 0xFF55FFFF);
+        context.text(font, Component.translatable("inventory-organizer.tier_order.armor_label"), armorX, gridY - 12, 0xFF55FFFF);
         for (int i = 0; i < 4; i++) {
             drawEquipSlot(context, armorX, gridY + i * SLOT_H, i, mouseX, mouseY);
         }
 
-        // Offhand slot (below armor)
+        // Offhand slot (below armor) — its label ("Offhand") is drawn under the slot by drawEquipSlot,
+        // so no separate header here (the old one overlapped the Boots label).
         int offhandY = gridY + 4 * SLOT_H + 4;
-        context.drawTextWithShadow(textRenderer, Text.literal("Off"), armorX + 4, offhandY - 10, 0xFF55FFFF);
         drawEquipSlot(context, armorX, offhandY, 4, mouseX, mouseY);
+
+        // Auto-switch overlay: mark the switch slot (gold "S").
+        if (autoSwitchView) {
+            int sw = config.getSwitchSlot();
+            if (sw >= 0) drawRoleMarker(context, sw, 0xFFFFD24A, "S");
+            if (switchPlaceMode == 1) context.text(font,
+                    Component.translatable("inventory-organizer.switch.click_hotbar"), gridX, gridY - 24, 0xFFFFD24A);
+        }
     }
 
-    private void drawEquipSlot(DrawContext context, int x, int y, int equipIdx, int mouseX, int mouseY) {
+    private void drawEquipSlot(GuiGraphicsExtractor context, int x, int y, int equipIdx, int mouseX, int mouseY) {
         String text = equipTexts[equipIdx];
         boolean hovered = mouseX >= x && mouseX < x + SLOT_W && mouseY >= y && mouseY < y + SLOT_H;
         boolean hasRule = !text.equals("any") && !text.equals("empty");
@@ -630,34 +1129,38 @@ public class VisualInventoryConfigScreen extends Screen {
 
         ItemStack icon = getIconForText(text);
         if (icon.isEmpty()) icon = getDefaultEquipIcon(equipIdx);
-        if (!icon.isEmpty()) context.drawItem(icon, x + (SLOT_W - 16) / 2, y + (SLOT_H - 16) / 2);
+        if (!icon.isEmpty()) VisualInventoryConfigScreen.drawItemIcon(context, icon, x + (SLOT_W - 16) / 2, y + (SLOT_H - 16) / 2);
 
         String displayText = text.equals("any") ? EQUIP_LABELS[equipIdx] : getDisplayText(text);
         int maxTextW = SLOT_W - 4;
-        if (textRenderer.getWidth(displayText) > maxTextW) {
-            while (displayText.length() > 1 && textRenderer.getWidth(displayText + ".") > maxTextW)
+        if (font.width(displayText) > maxTextW) {
+            while (displayText.length() > 1 && font.width(displayText + ".") > maxTextW)
                 displayText = displayText.substring(0, displayText.length() - 1);
             displayText += ".";
         }
-        int textW = textRenderer.getWidth(displayText);
+        int textW = font.width(displayText);
         int textColor = text.equals("empty") ? 0xFFAA4444 : text.equals("any") ? 0xFF888888 : 0xFF5599FF;
-        context.drawTextWithShadow(textRenderer, Text.literal(displayText),
+        context.text(font, Component.literal(displayText),
                 x + (SLOT_W - textW) / 2, y + 27, textColor);
     }
 
     private ItemStack getDefaultEquipIcon(int equipIdx) {
-        switch (equipIdx) {
-            case 0: return new ItemStack(Items.IRON_HELMET);
-            case 1: return new ItemStack(Items.IRON_CHESTPLATE);
-            case 2: return new ItemStack(Items.IRON_LEGGINGS);
-            case 3: return new ItemStack(Items.IRON_BOOTS);
-            case 4: return new ItemStack(Items.SHIELD);
-            default: return ItemStack.EMPTY;
+        try {
+            switch (equipIdx) {
+                case 0: return safeIcon(Items.IRON_HELMET);
+                case 1: return safeIcon(Items.IRON_CHESTPLATE);
+                case 2: return safeIcon(Items.IRON_LEGGINGS);
+                case 3: return safeIcon(Items.IRON_BOOTS);
+                case 4: return safeIcon(Items.SHIELD);
+                default: return ItemStack.EMPTY;
+            }
+        } catch (NullPointerException e) {
+            return ItemStack.EMPTY;
         }
     }
 
     /** Draw a Minecraft-style sunken slot with 3D bevel effect */
-    private void drawMCSlot(DrawContext context, int x, int y, int innerColor, boolean hovered, boolean hasRule) {
+    private void drawMCSlot(GuiGraphicsExtractor context, int x, int y, int innerColor, boolean hovered, boolean hasRule) {
         // 1. Outer black frame
         context.fill(x, y, x + SLOT_W, y + SLOT_H, 0xFF111111);
         // 2. Top + Left dark shadow edge (creates sunken look)
@@ -676,14 +1179,14 @@ public class VisualInventoryConfigScreen extends Screen {
         if (hovered) {
             context.fill(x + 3, y + 3, x + SLOT_W - 3, y + SLOT_H - 3, 0x55FFFF00);
             // Bright yellow inner frame
-            context.drawHorizontalLine(x + 2, x + SLOT_W - 3, y + 2, 0xFFFFFF00);
-            context.drawHorizontalLine(x + 2, x + SLOT_W - 3, y + SLOT_H - 3, 0xFFFFFF00);
-            context.drawVerticalLine(x + 2, y + 2, y + SLOT_H - 3, 0xFFFFFF00);
-            context.drawVerticalLine(x + SLOT_W - 3, y + 2, y + SLOT_H - 3, 0xFFFFFF00);
+            context.horizontalLine(x + 2, x + SLOT_W - 3, y + 2, 0xFFFFFF00);
+            context.horizontalLine(x + 2, x + SLOT_W - 3, y + SLOT_H - 3, 0xFFFFFF00);
+            context.verticalLine(x + 2, y + 2, y + SLOT_H - 3, 0xFFFFFF00);
+            context.verticalLine(x + SLOT_W - 3, y + 2, y + SLOT_H - 3, 0xFFFFFF00);
         }
     }
 
-    private void drawSlot(DrawContext context, int x, int y, int slot, int mouseX, int mouseY) {
+    private void drawSlot(GuiGraphicsExtractor context, int x, int y, int slot, int mouseX, int mouseY) {
         String text = slotTexts[slot];
         boolean hovered = mouseX >= x && mouseX < x + SLOT_W && mouseY >= y && mouseY < y + SLOT_H;
         boolean hasRule = !text.equals("any") && !text.equals("empty");
@@ -698,98 +1201,146 @@ public class VisualInventoryConfigScreen extends Screen {
         // Draw item icon centered
         ItemStack icon = getIconForText(text);
         if (!icon.isEmpty()) {
-            context.drawItem(icon, x + (SLOT_W - 16) / 2, y + (SLOT_H - 16) / 2);
+            VisualInventoryConfigScreen.drawItemIcon(context, icon, x + (SLOT_W - 16) / 2, y + (SLOT_H - 16) / 2);
         }
 
         // Label below icon
         String displayText = getDisplayText(text);
         int maxTextW = SLOT_W - 4;
-        if (textRenderer.getWidth(displayText) > maxTextW) {
-            while (displayText.length() > 1 && textRenderer.getWidth(displayText + ".") > maxTextW)
+        if (font.width(displayText) > maxTextW) {
+            while (displayText.length() > 1 && font.width(displayText + ".") > maxTextW)
                 displayText = displayText.substring(0, displayText.length() - 1);
             displayText += ".";
         }
-        int textW = textRenderer.getWidth(displayText);
+        int textW = font.width(displayText);
         int textColor = text.equals("empty") ? 0xFFAA4444 : text.equals("any") ? 0xFF888888 : 0xFF55CC55;
-        context.drawTextWithShadow(textRenderer, Text.literal(displayText),
+        context.text(font, Component.literal(displayText),
                 x + (SLOT_W - textW) / 2, y + 27, textColor);
+
+        // Auto-refill marker: a bright green border around the whole slot + an "R" corner badge, so it's
+        // unmistakable (the recycle glyph doesn't render in Minecraft's font).
+        if (slot >= 0 && slot < 36 && slotRefill[slot]) {
+            int g = 0xFF33DD33;
+            context.fill(x, y, x + SLOT_W, y + 2, g);                       // top
+            context.fill(x, y + SLOT_H - 2, x + SLOT_W, y + SLOT_H, g);     // bottom
+            context.fill(x, y, x + 2, y + SLOT_H, g);                       // left
+            context.fill(x + SLOT_W - 2, y, x + SLOT_W, y + SLOT_H, g);     // right
+            context.fill(x + 1, y + 1, x + 10, y + 10, 0xFF1E8E1E);
+            context.text(font, Component.literal("§fR"), x + 2, y + 1, 0xFFFFFFFF);
+        }
     }
 
     /** Get an item icon for a rule text */
     private ItemStack getIconForText(String text) {
-        if (text.equals("empty")) return new ItemStack(Items.BARRIER);
+        try {
+            return getIconForTextUnsafe(text);
+        } catch (NullPointerException e) {
+            // 26.1 sometimes throws "Components not bound yet" if accessed too early.
+            // Fall back to empty icon — text label still shows.
+            return ItemStack.EMPTY;
+        }
+    }
+
+    private ItemStack getIconForTextUnsafe(String text) {
+        if (text.equals("empty")) return safeIcon(Items.BARRIER);
         if (text.equals("any")) return ItemStack.EMPTY;
         if (text.startsWith("g:")) {
             switch (text.substring(2)) {
-                case "weapons": return new ItemStack(Items.IRON_SWORD);
-                case "tools": return new ItemStack(Items.IRON_PICKAXE);
-                case "armor": return new ItemStack(Items.IRON_CHESTPLATE);
-                case "blocks": return new ItemStack(Items.OAK_PLANKS);
-                case "food": return new ItemStack(Items.COOKED_BEEF);
-                case "utility": return new ItemStack(Items.TORCH);
-                case "valuables": return new ItemStack(Items.DIAMOND);
-                case "potions":        return new ItemStack(Items.POTION);
-                case "splash_potions": return new ItemStack(Items.SPLASH_POTION);
-                case "arrows":         return new ItemStack(Items.ARROW);
-                case "misc":           return new ItemStack(Items.ENDER_PEARL);
-                case "logs":     return new ItemStack(Items.OAK_LOG);
-                case "boats":    return new ItemStack(Items.OAK_BOAT);
-                case "plants":   return new ItemStack(Items.DANDELION);
-                case "stone":    return new ItemStack(Items.STONE);
-                case "ores":     return new ItemStack(Items.IRON_ORE);
-                case "cooked":   return new ItemStack(Items.COOKED_BEEF);
-                case "rawfood":  return new ItemStack(Items.BEEF);
-                case "nether":   return new ItemStack(Items.NETHERRACK);
-                case "end":      return new ItemStack(Items.END_STONE);
-                case "partial":  return new ItemStack(Items.OAK_SLAB);
-                case "redstone": return new ItemStack(Items.REDSTONE);
-                case "creative": return new ItemStack(Items.COMMAND_BLOCK);
+                case "weapons": return safeIcon(Items.IRON_SWORD);
+                case "tools": return safeIcon(Items.IRON_PICKAXE);
+                case "armor": return safeIcon(Items.IRON_CHESTPLATE);
+                case "blocks": return safeIcon(Items.OAK_PLANKS);
+                case "food": return safeIcon(Items.COOKED_BEEF);
+                case "utility": return safeIcon(Items.TORCH);
+                case "valuables": return safeIcon(Items.DIAMOND);
+                case "potions":        return safeIcon(Items.POTION);
+                case "splash_potions": return safeIcon(Items.SPLASH_POTION);
+                case "arrows":         return safeIcon(Items.ARROW);
+                case "misc":           return safeIcon(Items.ENDER_PEARL);
+                case "logs":     return safeIcon(Items.OAK_LOG);
+                case "boats":    return safeIcon(Items.OAK_BOAT);
+                case "plants":   return safeIcon(Items.DANDELION);
+                case "stone":    return safeIcon(Items.STONE);
+                case "ores":     return safeIcon(Items.IRON_ORE);
+                case "cooked":   return safeIcon(Items.COOKED_BEEF);
+                case "rawfood":  return safeIcon(Items.BEEF);
+                case "nether":   return safeIcon(Items.NETHERRACK);
+                case "end":      return safeIcon(Items.END_STONE);
+                case "partial":  return safeIcon(Items.OAK_SLAB);
+                case "redstone": return safeIcon(Items.REDSTONE);
+                case "creative": return safeIcon(Items.COMMAND_BLOCK);
                 default: return ItemStack.EMPTY;
             }
         }
         if (text.startsWith("b:")) {
             // Bundle content slot: show bundle icon regardless of content
-            return new ItemStack(Items.BUNDLE);
+            return safeIcon(Items.BUNDLE);
         }
         if (text.startsWith("cg:")) {
-            // Custom group: show a chest icon
-            return new ItemStack(Items.CHEST);
+            String name = text.substring(3);
+            // User-chosen icon override (set via "Set Icon" in the group editor) takes priority.
+            String[] iconPref = OrganizerConfig.get().getPreference("cg_icon_" + name);
+            if (iconPref != null && iconPref.length > 0 && iconPref[0] != null && !iconPref[0].isEmpty()) {
+                try {
+                    String mid = iconPref[0].contains(":") ? iconPref[0] : "minecraft:" + iconPref[0];
+                    Item it = BuiltInRegistries.ITEM.getValue(Identifier.parse(mid));
+                    if (it != null && it != Items.AIR) return new ItemStack(net.minecraft.core.Holder.direct(it));
+                } catch (Exception ignored) {}
+            }
+            // Built-in groups are materialized as custom groups but keep their iconic look.
+            for (String bn : com.example.inventoryorganizer.InventorySorter.BUILTIN_GROUP_NAMES) {
+                if (bn.equals(name)) return getIconForTextUnsafe("g:" + name);
+            }
+            // Real custom group: show its first member item, falling back to a chest.
+            java.util.List<String> members = OrganizerConfig.get().getCustomGroup(name);
+            if (!members.isEmpty() && members.get(0) != null && !members.get(0).isEmpty()) {
+                try {
+                    String mid = members.get(0).contains(":") ? members.get(0) : "minecraft:" + members.get(0);
+                    Item it = BuiltInRegistries.ITEM.getValue(Identifier.parse(mid));
+                    if (it != null && it != Items.AIR) return new ItemStack(net.minecraft.core.Holder.direct(it));
+                } catch (Exception ignored) {}
+            }
+            return safeIcon(Items.CHEST);
         }
         if (text.startsWith("t:")) {
             switch (text.substring(2)) {
-                case "sword": return new ItemStack(Items.IRON_SWORD);
-                case "pickaxe": return new ItemStack(Items.IRON_PICKAXE);
-                case "axe": return new ItemStack(Items.IRON_AXE);
-                case "shovel": return new ItemStack(Items.IRON_SHOVEL);
-                case "hoe": return new ItemStack(Items.IRON_HOE);
-                case "bow": return new ItemStack(Items.BOW);
-                case "crossbow": return new ItemStack(Items.CROSSBOW);
-                case "trident": return new ItemStack(Items.TRIDENT);
-                case "mace": return new ItemStack(Items.MACE);
-                case "helmet": return new ItemStack(Items.IRON_HELMET);
-                case "chestplate": return new ItemStack(Items.IRON_CHESTPLATE);
-                case "leggings": return new ItemStack(Items.IRON_LEGGINGS);
-                case "boots": return new ItemStack(Items.IRON_BOOTS);
-                case "shield": return new ItemStack(Items.SHIELD);
-                case "elytra": return new ItemStack(Items.ELYTRA);
-                case "fishing_rod": return new ItemStack(Items.FISHING_ROD);
-                case "shears": return new ItemStack(Items.SHEARS);
-                case "flint_and_steel":  return new ItemStack(Items.FLINT_AND_STEEL);
-                case "potion":           return new ItemStack(Items.POTION);
-                case "splash_potion":    return new ItemStack(Items.SPLASH_POTION);
-                case "lingering_potion": return new ItemStack(Items.LINGERING_POTION);
-                case "arrow":            return new ItemStack(Items.ARROW);
-                case "spectral_arrow":   return new ItemStack(Items.SPECTRAL_ARROW);
-                case "tipped_arrow":     return new ItemStack(Items.TIPPED_ARROW);
+                case "sword": return safeIcon(Items.IRON_SWORD);
+                case "pickaxe": return safeIcon(Items.IRON_PICKAXE);
+                case "axe": return safeIcon(Items.IRON_AXE);
+                case "shovel": return safeIcon(Items.IRON_SHOVEL);
+                case "hoe": return safeIcon(Items.IRON_HOE);
+                case "bow": return safeIcon(Items.BOW);
+                case "crossbow": return safeIcon(Items.CROSSBOW);
+                case "trident": return safeIcon(Items.TRIDENT);
+                case "mace": return safeIcon(Items.MACE);
+                case "helmet": return safeIcon(Items.IRON_HELMET);
+                case "chestplate": return safeIcon(Items.IRON_CHESTPLATE);
+                case "leggings": return safeIcon(Items.IRON_LEGGINGS);
+                case "boots": return safeIcon(Items.IRON_BOOTS);
+                case "shield": return safeIcon(Items.SHIELD);
+                case "elytra": return safeIcon(Items.ELYTRA);
+                case "fishing_rod": return safeIcon(Items.FISHING_ROD);
+                case "shears": return safeIcon(Items.SHEARS);
+                case "flint_and_steel":  return safeIcon(Items.FLINT_AND_STEEL);
+                case "potion":           return safeIcon(Items.POTION);
+                case "splash_potion":    return safeIcon(Items.SPLASH_POTION);
+                case "lingering_potion": return safeIcon(Items.LINGERING_POTION);
+                case "arrow":            return safeIcon(Items.ARROW);
+                case "spectral_arrow":   return safeIcon(Items.SPECTRAL_ARROW);
+                case "tipped_arrow":     return safeIcon(Items.TIPPED_ARROW);
                 default: return ItemStack.EMPTY;
             }
+        }
+        // Specific potion effect (pot:healing) — generic potion icon (the label names the effect).
+        if (text.startsWith("pot:")) {
+            return safeIcon(Items.POTION);
         }
         // Specific item ID
         if (text.contains(":")) {
             try {
-                Identifier id = Identifier.of(text);
-                Item item = Registries.ITEM.get(id);
-                if (item != null && item != Items.AIR) return new ItemStack(item);
+                Identifier id = Identifier.parse(text);
+                Item item = BuiltInRegistries.ITEM.getValue(id);
+                if (item != null && item != Items.AIR) return new ItemStack(net.minecraft.core.Holder.direct(item));
             } catch (Exception ignored) {}
         }
         return ItemStack.EMPTY;
@@ -801,6 +1352,7 @@ public class VisualInventoryConfigScreen extends Screen {
         if (text.equals("empty")) return "X";
         if (text.startsWith("g:")) return text.substring(2);
         if (text.startsWith("t:")) return text.substring(2);
+        if (text.startsWith("pot:")) return text.substring(4);
         if (text.startsWith("cg:")) return text.substring(3);
         // Specific item: show just the item name part
         if (text.contains(":")) {
@@ -811,7 +1363,7 @@ public class VisualInventoryConfigScreen extends Screen {
     }
 
     private void rebuildPaletteButtons() {
-        for (ButtonWidget btn : paletteButtons) remove(btn);
+        for (Button btn : paletteButtons) removeWidget(btn);
         paletteButtons.clear();
 
         int rowHeight = 22; // Increased from 16 to 22 for taller buttons
@@ -828,8 +1380,8 @@ public class VisualInventoryConfigScreen extends Screen {
             // Leave space on the left for the icon (18px), shorten label to fit
             String shortLabel = entry.label.length() > 10 ? entry.label.substring(0, 10) + ".." : entry.label;
             // Add spaces to push text right of icon
-            ButtonWidget btn = ButtonWidget.builder(
-                    Text.literal("         " + shortLabel),
+            Button btn = Button.builder(
+                    Component.literal("         " + shortLabel),
                     b -> {
                         if (selectedText != null && selectedText.equals(clickedEntry.ruleText)) {
                             selectedText = null;
@@ -839,13 +1391,13 @@ public class VisualInventoryConfigScreen extends Screen {
                             selectedLabel = clickedEntry.label;
                         }
                     }
-            ).dimensions(paletteX, py, paletteW, 20).build(); // Increased button height from 15 to 20
+            ).bounds(paletteX, py, paletteW, 20).build(); // Increased button height from 15 to 20
             paletteButtons.add(btn);
-            addDrawableChild(btn);
+            addRenderableWidget(btn);
         }
     }
 
-    private void drawPaletteExtras(DrawContext context, int mouseX, int mouseY) {
+    private void drawPaletteExtras(GuiGraphicsExtractor context, int mouseX, int mouseY) {
         int rowHeight = 22; // Match rebuildPaletteButtons
         int visibleRows = paletteH / rowHeight;
         int startIdx = paletteScroll;
@@ -856,7 +1408,7 @@ public class VisualInventoryConfigScreen extends Screen {
             PaletteEntry entry = filteredEntries.get(i);
             int py = paletteY + (i - startIdx) * rowHeight; // Match new spacing
             if (entry.isHeader) {
-                context.drawTextWithShadow(textRenderer, Text.literal(entry.label), paletteX + 2, py + 6, 0xFFFFFF55);
+                context.text(font, Component.literal(entry.label), paletteX + 2, py + 6, 0xFFFFFF55);
             }
         }
 
@@ -866,66 +1418,139 @@ public class VisualInventoryConfigScreen extends Screen {
             PaletteEntry entry = filteredEntries.get(i);
             if (entry.isHeader) continue;
             if (btnIdx >= paletteButtons.size()) break;
-            ButtonWidget btn = paletteButtons.get(btnIdx);
+            Button btn = paletteButtons.get(btnIdx);
             ItemStack icon = getIconForText(entry.ruleText);
             if (!icon.isEmpty()) {
                 // Draw 16x16 icon on the left inner edge of the button
-                context.drawItem(icon, btn.getX() + 2, btn.getY() + 2);
+                VisualInventoryConfigScreen.drawItemIcon(context, icon, btn.getX() + 2, btn.getY() + 2);
             }
             btnIdx++;
         }
 
         // Green border on selected button
-        for (ButtonWidget btn : paletteButtons) {
+        for (Button btn : paletteButtons) {
             if (selectedText != null && btn.getMessage().getString().contains("[" + selectedText + "]")) {
                 int bx = btn.getX(), by = btn.getY(), bw = btn.getWidth(), bh = btn.getHeight();
-                context.drawHorizontalLine(bx - 1, bx + bw, by - 1, 0xFF00FF00);
-                context.drawHorizontalLine(bx - 1, bx + bw, by + bh, 0xFF00FF00);
-                context.drawVerticalLine(bx - 1, by - 1, by + bh, 0xFF00FF00);
-                context.drawVerticalLine(bx + bw, by - 1, by + bh, 0xFF00FF00);
+                context.horizontalLine(bx - 1, bx + bw, by - 1, 0xFF00FF00);
+                context.horizontalLine(bx - 1, bx + bw, by + bh, 0xFF00FF00);
+                context.verticalLine(bx - 1, by - 1, by + bh, 0xFF00FF00);
+                context.verticalLine(bx + bw, by - 1, by + bh, 0xFF00FF00);
             }
         }
 
+        // Scrollbar (draggable)
+        if (maxPaletteScroll > 0) {
+            int sbRowH = 22;
+            int sbVisibleRows = paletteH / sbRowH;
+            int totalRows = filteredEntries.size();
+            int sbX = paletteX + paletteW - SCROLLBAR_WIDTH + 7;
+            int sbH = Math.max(20, paletteH * sbVisibleRows / Math.max(1, totalRows));
+            int sbY = paletteY + (int)((float)paletteScroll / maxPaletteScroll * (paletteH - sbH));
+            context.fill(sbX, paletteY, sbX + SCROLLBAR_WIDTH, paletteY + paletteH, 0xFF1A1A1A);
+            boolean hov = mouseX >= sbX && mouseX < sbX + SCROLLBAR_WIDTH && mouseY >= sbY && mouseY < sbY + sbH;
+            int color = (draggingScrollbar || hov) ? 0xFFCCCCCC : 0xFF888888;
+            context.fill(sbX, sbY, sbX + SCROLLBAR_WIDTH, sbY + sbH, color);
+        }
+
         // Item count
-        context.drawTextWithShadow(textRenderer, Text.literal(filteredEntries.size() + " items"),
+        context.text(font, Component.literal(filteredEntries.size() + " items"),
                 paletteX, paletteY + paletteH + 2, 0xFF888888);
     }
 
-    private void drawSlotTooltip(DrawContext context, int mouseX, int mouseY) {
+    /** Returns {sbX, trackTop, trackBottom, handleY, handleH} or null if no scroll needed. */
+    private int[] getScrollbarRect() {
+        if (maxPaletteScroll <= 0) return null;
+        int rowHeight = 22;
+        int visibleRows = paletteH / rowHeight;
+        int totalRows = filteredEntries.size();
+        int sbH = Math.max(20, paletteH * visibleRows / Math.max(1, totalRows));
+        int sbY = paletteY + (int)((float)paletteScroll / maxPaletteScroll * (paletteH - sbH));
+        int sbX = paletteX + paletteW - SCROLLBAR_WIDTH + 7;
+        return new int[]{sbX, paletteY, paletteY + paletteH, sbY, sbH};
+    }
+
+    private void scrollbarDragTo(double mouseY) {
+        int[] r = getScrollbarRect();
+        if (r == null) return;
+        int trackTop = r[1], trackBottom = r[2], handleH = r[4];
+        int trackHeight = trackBottom - trackTop;
+        if (trackHeight <= handleH) return;
+        double rel = (mouseY - trackTop - handleH / 2.0) / (trackHeight - handleH);
+        rel = Math.max(0.0, Math.min(1.0, rel));
+        int newScroll = (int)Math.round(rel * maxPaletteScroll);
+        if (newScroll != paletteScroll) {
+            paletteScroll = newScroll;
+            rebuildPaletteButtons();
+        }
+    }
+
+    /** Remaps a real (vanilla-delivered) mouse event into virtual space (see GuiScaleCap / init()). */
+    private net.minecraft.client.input.MouseButtonEvent toVirtual(net.minecraft.client.input.MouseButtonEvent e) {
+        if (GuiScaleCap.renderFactor() == 1f) return e;
+        return new net.minecraft.client.input.MouseButtonEvent(
+                GuiScaleCap.mx(e.x()), GuiScaleCap.my(e.y()), e.buttonInfo());
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double deltaX, double deltaY) {
+        click = toVirtual(click);
+        float guiScaleCapF = GuiScaleCap.renderFactor();
+        if (guiScaleCapF != 1f) { double s = 1.0 / guiScaleCapF; deltaX *= s; deltaY *= s; }
+        if (click.button() == 0 && draggingScrollbar) {
+            scrollbarDragTo(click.y());
+            return true;
+        }
+        return super.mouseDragged(click, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
+        click = toVirtual(click);
+        if (click.button() == 0 && draggingScrollbar) {
+            draggingScrollbar = false;
+            return true;
+        }
+        return super.mouseReleased(click);
+    }
+
+    private void drawSlotTooltip(GuiGraphicsExtractor context, int mouseX, int mouseY) {
         int hoveredSlot = getHoveredSlot(mouseX, mouseY);
         if (hoveredSlot >= 0) {
             String text = slotTexts[hoveredSlot];
-            String slotName = (hoveredSlot <= 8) ? "Hotbar " + (hoveredSlot + 1) :
-                    "Row " + ((hoveredSlot - 9) / 9 + 1) + " Col " + ((hoveredSlot - 9) % 9 + 1);
+            String slotName = (hoveredSlot <= 8) ? tr("inventory-organizer.inventory_config.tooltip_hotbar_name", (hoveredSlot + 1)) :
+                    tr("inventory-organizer.inventory_config.tooltip_row_col_name", ((hoveredSlot - 9) / 9 + 1), ((hoveredSlot - 9) % 9 + 1));
 
-            List<Text> tooltip = new ArrayList<>();
-            tooltip.add(Text.literal("Slot " + hoveredSlot + " (" + slotName + ")"));
-            tooltip.add(Text.literal("Rule: " + text));
+            List<Component> tooltip = new ArrayList<>();
+            tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_slot", hoveredSlot, slotName));
+            tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_rule", text));
+            if (slotRefill[hoveredSlot]) tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_autorefill_on"));
             if (selectedText != null) {
-                tooltip.add(Text.literal("Click to set: " + selectedText));
+                tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_click_to_set", selectedText));
             } else {
-                tooltip.add(Text.literal("Right-click = clear to 'any'"));
+                tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_right_click_clear"));
             }
-            context.drawTooltip(textRenderer, tooltip, mouseX, mouseY);
+            // Tooltip rendering disabled in 26.1 — GuiGraphicsExtractor has no direct tooltip method.
+            // context.renderTooltip(font, tooltip, mouseX, mouseY);
             return;
         }
         // Equipment slot tooltip
         int equipIdx = getHoveredEquipSlot(mouseX, mouseY);
         if (equipIdx >= 0) {
             String text = equipTexts[equipIdx];
-            List<Text> tooltip = new ArrayList<>();
-            tooltip.add(Text.literal(EQUIP_LABELS[equipIdx] + " Slot"));
-            tooltip.add(Text.literal("Rule: " + text));
+            List<Component> tooltip = new ArrayList<>();
+            tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_equip_slot", EQUIP_LABELS[equipIdx]));
+            tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_rule", text));
             if (selectedText != null) {
                 if (isValidForEquipSlot(equipIdx, selectedText)) {
-                    tooltip.add(Text.literal("Click to set: " + selectedText));
+                    tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_click_to_set", selectedText));
                 } else {
-                    tooltip.add(Text.literal("\u00a7c" + selectedText + " cannot go here!"));
+                    tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_cannot_go_here", selectedText));
                 }
             } else {
-                tooltip.add(Text.literal("Right-click = clear to 'any'"));
+                tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_right_click_clear"));
             }
-            context.drawTooltip(textRenderer, tooltip, mouseX, mouseY);
+            // Tooltip rendering disabled in 26.1 — GuiGraphicsExtractor has no direct tooltip method.
+            // context.renderTooltip(font, tooltip, mouseX, mouseY);
         }
     }
 
@@ -973,20 +1598,26 @@ public class VisualInventoryConfigScreen extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(Click click, boolean bl) {
+    public boolean mouseClicked(MouseButtonEvent click, boolean bl) {
+        click = toVirtual(click);
         double mouseX = click.x();
         double mouseY = click.y();
         int button = click.button();
 
-        if (config.isShowHelp()) {
-            int gw = 300, gh = 178;
-            int gx = width / 2 - gw / 2;
-            int gy = height / 2 - gh / 2;
-            if (mouseX < gx || mouseX > gx + gw || mouseY < gy || mouseY > gy + gh) {
-                config.setShowHelp(false);
-                config.save();
+        // Inline help overlay is modal: any click (inside or outside) dismisses it.
+        if (inlineHelpOpen) { inlineHelpOpen = false; return true; }
+
+        // Scrollbar drag start
+        if (button == 0) {
+            int[] r = getScrollbarRect();
+            if (r != null) {
+                int sbX = r[0], trackTop = r[1], trackBottom = r[2], handleY = r[3], handleH = r[4];
+                if (mouseX >= sbX && mouseX < sbX + SCROLLBAR_WIDTH && mouseY >= trackTop && mouseY < trackBottom) {
+                    draggingScrollbar = true;
+                    if (mouseY < handleY || mouseY >= handleY + handleH) scrollbarDragTo(mouseY);
+                    return true;
+                }
             }
-            return true;
         }
 
         // Double-click detection for opening tier order config (inventory mode only)
@@ -1000,13 +1631,23 @@ public class VisualInventoryConfigScreen extends Screen {
                     long currentTime = System.currentTimeMillis();
                     if (lastClickTime > 0 && (currentTime - lastClickTime) < 500 && lastClickedSlot == hoveredSlot) {
                         // Double click detected - open tier order config
-                        MinecraftClient.getInstance().setScreen(new SortingOrderConfigScreen(this, slotTexts, equipTexts));
+                        Minecraft.getInstance().gui.setScreen(new SortingOrderConfigScreen(this, slotTexts, equipTexts));
                         lastClickTime = 0; // Reset
                         return true;
                     }
                     lastClickTime = currentTime;
                     lastClickedSlot = hoveredSlot;
                 }
+            }
+        }
+
+        // Auto-switch placement: assign the switch slot on the next hotbar click.
+        if (!showStorage && autoSwitchView && switchPlaceMode == 1) {
+            int slot = getHoveredSlot((int) mouseX, (int) mouseY);
+            if (slot >= 0) {
+                if (slot <= 8) { config.setSwitchSlot(slot); config.save(); }
+                switchPlaceMode = 0;
+                return true;
             }
         }
 
@@ -1052,15 +1693,25 @@ public class VisualInventoryConfigScreen extends Screen {
 
         int hoveredSlot = getHoveredSlot((int) mouseX, (int) mouseY);
         if (hoveredSlot >= 0) {
+            // Switch slot is reserved — no rule may be assigned to it in auto mode
+            boolean isSwitchSlot = autoSwitchView && hoveredSlot == config.getSwitchSlot();
             if (button == 0 && selectedText != null) {
-                slotTexts[hoveredSlot] = selectedText;
-                saveToConfig();
+                if (!isSwitchSlot) { slotTexts[hoveredSlot] = selectedText; saveToConfig(); }
                 return true;
             } else if (button == 1) {
-                slotTexts[hoveredSlot] = "any";
-                saveToConfig();
-                selectedText = null;
-                selectedLabel = null;
+                if (!isSwitchSlot) {
+                    slotTexts[hoveredSlot] = "any";
+                    saveToConfig();
+                    selectedText = null;
+                    selectedLabel = null;
+                }
+                return true;
+            } else if (button == 2) {
+                // Middle-click toggles auto-refill — only allowed on hotbar slots (0-8).
+                if (hoveredSlot <= 8 && !isSwitchSlot) {
+                    slotRefill[hoveredSlot] = !slotRefill[hoveredSlot];
+                    saveToConfig();
+                }
                 return true;
             }
         }
@@ -1070,6 +1721,8 @@ public class VisualInventoryConfigScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        mouseX = GuiScaleCap.mx(mouseX);
+        mouseY = GuiScaleCap.my(mouseY);
         if (mouseX >= paletteX - 2 && mouseX < paletteX + paletteW + 2
                 && mouseY >= paletteY - 24 && mouseY < paletteY + paletteH) {
             int oldScroll = paletteScroll;
@@ -1229,23 +1882,23 @@ public class VisualInventoryConfigScreen extends Screen {
     }
 
     /** Draw a decorated panel background (Minecraft-style) */
-    private void drawDecoratedPanel(DrawContext context, int x, int y, int width, int height) {
+    private void drawDecoratedPanel(GuiGraphicsExtractor context, int x, int y, int width, int height) {
         // Dark background
         context.fill(x, y, x + width, y + height, 0xC0101010);
         
         // Outer border (dark)
-        context.drawHorizontalLine(x, x + width - 1, y, 0xFF000000);
-        context.drawHorizontalLine(x, x + width - 1, y + height - 1, 0xFF000000);
-        context.drawVerticalLine(x, y, y + height - 1, 0xFF000000);
-        context.drawVerticalLine(x + width - 1, y, y + height - 1, 0xFF000000);
+        context.horizontalLine(x, x + width - 1, y, 0xFF000000);
+        context.horizontalLine(x, x + width - 1, y + height - 1, 0xFF000000);
+        context.verticalLine(x, y, y + height - 1, 0xFF000000);
+        context.verticalLine(x + width - 1, y, y + height - 1, 0xFF000000);
         
         // Inner highlight (light gray)
-        context.drawHorizontalLine(x + 1, x + width - 2, y + 1, 0xFF555555);
-        context.drawVerticalLine(x + 1, y + 1, y + height - 2, 0xFF555555);
+        context.horizontalLine(x + 1, x + width - 2, y + 1, 0xFF555555);
+        context.verticalLine(x + 1, y + 1, y + height - 2, 0xFF555555);
         
         // Bottom-right shadow (darker)
-        context.drawHorizontalLine(x + 1, x + width - 2, y + height - 2, 0xFF2A2A2A);
-        context.drawVerticalLine(x + width - 2, y + 1, y + height - 2, 0xFF2A2A2A);
+        context.horizontalLine(x + 1, x + width - 2, y + height - 2, 0xFF2A2A2A);
+        context.verticalLine(x + width - 2, y + 1, y + height - 2, 0xFF2A2A2A);
         
         // Corner decorations (small dots for detail)
         context.fill(x + 2, y + 2, x + 4, y + 4, 0xFF888888);
@@ -1255,20 +1908,20 @@ public class VisualInventoryConfigScreen extends Screen {
     }
 
     /** Draw a decorated border only (no dark background) */
-    private void drawDecoratedBorder(DrawContext context, int x, int y, int width, int height) {
+    private void drawDecoratedBorder(GuiGraphicsExtractor context, int x, int y, int width, int height) {
         // Outer border (dark)
-        context.drawHorizontalLine(x, x + width - 1, y, 0xFF000000);
-        context.drawHorizontalLine(x, x + width - 1, y + height - 1, 0xFF000000);
-        context.drawVerticalLine(x, y, y + height - 1, 0xFF000000);
-        context.drawVerticalLine(x + width - 1, y, y + height - 1, 0xFF000000);
+        context.horizontalLine(x, x + width - 1, y, 0xFF000000);
+        context.horizontalLine(x, x + width - 1, y + height - 1, 0xFF000000);
+        context.verticalLine(x, y, y + height - 1, 0xFF000000);
+        context.verticalLine(x + width - 1, y, y + height - 1, 0xFF000000);
         
         // Inner highlight (light gray)
-        context.drawHorizontalLine(x + 1, x + width - 2, y + 1, 0xFF555555);
-        context.drawVerticalLine(x + 1, y + 1, y + height - 2, 0xFF555555);
+        context.horizontalLine(x + 1, x + width - 2, y + 1, 0xFF555555);
+        context.verticalLine(x + 1, y + 1, y + height - 2, 0xFF555555);
         
         // Bottom-right shadow (darker)
-        context.drawHorizontalLine(x + 1, x + width - 2, y + height - 2, 0xFF2A2A2A);
-        context.drawVerticalLine(x + width - 2, y + 1, y + height - 2, 0xFF2A2A2A);
+        context.horizontalLine(x + 1, x + width - 2, y + height - 2, 0xFF2A2A2A);
+        context.verticalLine(x + width - 2, y + 1, y + height - 2, 0xFF2A2A2A);
         
         // Corner decorations (small dots for detail)
         context.fill(x + 2, y + 2, x + 4, y + 4, 0xFF888888);
@@ -1277,50 +1930,328 @@ public class VisualInventoryConfigScreen extends Screen {
         context.fill(x + width - 4, y + height - 4, x + width - 2, y + height - 2, 0xFF888888);
     }
 
-    /** Draw the guide overlay panel (centered, on top of everything) */
-    private void drawGuideOverlay(DrawContext context) {
-        int gw = 300, gh = 178;
-        int gx = width / 2 - gw / 2;
-        int gy = height / 2 - gh / 2;
-
-        // Darken entire screen behind overlay
-        context.fill(0, 0, width, height, 0x88000000);
-
-        drawDecoratedPanel(context, gx, gy, gw, gh);
-
-        // Title bar
-        context.fill(gx + 4, gy + 4, gx + gw - 4, gy + 20, 0xFF1A1A2E);
-        context.drawCenteredTextWithShadow(textRenderer,
-            Text.literal("\u00a7e\u00a7lInventory Config Guide"), width / 2, gy + 8, 0xFFFFFF55);
-
-        int lx = gx + 12, ly = gy + 26, lh = 13;
-
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[1] \u00a7fSelect a rule from the right panel (click to highlight it)"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[2] \u00a7fLeft-click a slot to assign the selected rule to it"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[3] \u00a7fRight-click a slot to reset it back to \u00a77'any'"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a77       'any' = accepts everything  |  'empty' = always empty"), lx, ly, 0xFFAAAAAA); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[4] \u00a7fUse the search box (top-right) to filter the rule list"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[5] \u00a7f'Tier Order' \u00a77\u00bb \u00a7fset item sort priority per slot"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[6] \u00a7f'Kits' \u00a77\u00bb \u00a7fsave and load inventory preset layouts"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.drawTextWithShadow(textRenderer,
-            Text.literal("\u00a7e[7] \u00a7f'Save' saves your changes and closes the screen"), lx, ly, 0xFFFFFFFF); ly += lh + 6;
-
-        // Separator
-        context.fill(gx + 12, ly, gx + gw - 12, ly + 1, 0xFF444444); ly += 6;
-
-        context.drawCenteredTextWithShadow(textRenderer,
-            Text.literal("\u00a77Click outside or press \u00a7e[?]\u00a77 to close this guide"), width / 2, ly, 0xFF888888);
-    }
-
     @Override
-    public void close() {
-        MinecraftClient.getInstance().setScreen(parent);
+    public void onClose() {
+        Minecraft.getInstance().gui.setScreen(parent);
     }
+
+    /** Safely create ItemStack — returns EMPTY if components aren't bound yet (26.1 NPE workaround). */
+    public static net.minecraft.world.item.ItemStack safeIcon(net.minecraft.world.item.Item item) {
+        if (item == null) return net.minecraft.world.item.ItemStack.EMPTY;
+        try {
+            return new net.minecraft.world.item.ItemStack(net.minecraft.core.Holder.direct(item));
+        } catch (Throwable t) {
+            return net.minecraft.world.item.ItemStack.EMPTY;
+        }
+    }
+
+    /** 26.1 fallback: blit item PNG texture directly when GuiItemRenderState fails to render due to unbound components. */
+    // Items whose flat texture name differs from their registry name, OR have no flat item texture (use fallback).
+    private static final java.util.Map<String, String> TEXTURE_NAME_OVERRIDES = java.util.Map.ofEntries(
+        // 3D models with a "_standby" or similar flat texture
+        java.util.Map.entry("crossbow", "item/crossbow_standby"),
+        // 3D-only models — fallback to a sensible flat representation
+        java.util.Map.entry("shield", "gui/sprites/container/slot/shield"),  // 2D shield silhouette from vanilla slot icons
+        java.util.Map.entry("oak_chest_boat", "item/oak_boat"),
+        java.util.Map.entry("spruce_chest_boat", "item/spruce_boat"),
+        java.util.Map.entry("birch_chest_boat", "item/birch_boat"),
+        java.util.Map.entry("jungle_chest_boat", "item/jungle_boat"),
+        java.util.Map.entry("acacia_chest_boat", "item/acacia_boat"),
+        java.util.Map.entry("dark_oak_chest_boat", "item/dark_oak_boat"),
+        java.util.Map.entry("mangrove_chest_boat", "item/mangrove_boat"),
+        java.util.Map.entry("cherry_chest_boat", "item/cherry_boat"),
+        java.util.Map.entry("bamboo_chest_raft", "item/bamboo_raft"),
+        java.util.Map.entry("pale_oak_chest_boat", "item/pale_oak_boat"),
+        // tipped arrow renders as 3D — use base arrow as flat fallback
+        java.util.Map.entry("tipped_arrow", "item/arrow"),
+        // Block-named items that need block/* paths instead of item/*
+        java.util.Map.entry("torch", "block/torch"),
+        java.util.Map.entry("redstone_torch", "block/redstone_torch"),
+        java.util.Map.entry("soul_torch", "block/soul_torch"),
+        java.util.Map.entry("command_block", "block/command_block_front"),
+        java.util.Map.entry("chain_command_block", "block/chain_command_block_front"),
+        java.util.Map.entry("repeating_command_block", "block/repeating_command_block_front"),
+        // Special block items where the item name doesn't directly match block texture
+        java.util.Map.entry("chest", "block/oak_planks"),
+        java.util.Map.entry("trapped_chest", "block/oak_planks"),
+        java.util.Map.entry("ender_chest", "block/end_stone"),
+        java.util.Map.entry("crafting_table", "block/crafting_table_top"),
+        java.util.Map.entry("furnace", "block/furnace_front"),
+        java.util.Map.entry("blast_furnace", "block/blast_furnace_front"),
+        java.util.Map.entry("smoker", "block/smoker_front"),
+        java.util.Map.entry("dispenser", "block/dispenser_front"),
+        java.util.Map.entry("dropper", "block/dropper_front"),
+        java.util.Map.entry("hopper", "block/hopper_inside"),
+        java.util.Map.entry("piston", "block/piston_side"),
+        java.util.Map.entry("sticky_piston", "block/piston_side"),
+        java.util.Map.entry("observer", "block/observer_side"),
+        java.util.Map.entry("note_block", "block/note_block"),
+        java.util.Map.entry("jukebox", "block/jukebox_top"),
+        java.util.Map.entry("loom", "block/loom_front"),
+        java.util.Map.entry("stonecutter", "block/stonecutter_top"),
+        java.util.Map.entry("smithing_table", "block/smithing_table_top"),
+        java.util.Map.entry("cartography_table", "block/cartography_table_top"),
+        java.util.Map.entry("fletching_table", "block/fletching_table_top"),
+        java.util.Map.entry("grindstone", "block/grindstone_side"),
+        java.util.Map.entry("anvil", "block/anvil"),
+        java.util.Map.entry("chipped_anvil", "block/chipped_anvil_top"),
+        java.util.Map.entry("damaged_anvil", "block/damaged_anvil_top"),
+        java.util.Map.entry("beacon", "block/beacon"),
+        java.util.Map.entry("conduit", "block/conduit"),
+        java.util.Map.entry("dragon_egg", "block/dragon_egg"),
+        java.util.Map.entry("end_portal_frame", "block/end_portal_frame_top"),
+        java.util.Map.entry("end_rod", "block/end_rod"),
+        java.util.Map.entry("lightning_rod", "block/lightning_rod"),
+        java.util.Map.entry("brewing_stand", "block/brewing_stand"),
+        java.util.Map.entry("cauldron", "block/cauldron_top"),
+        java.util.Map.entry("respawn_anchor", "block/respawn_anchor_top"),
+        java.util.Map.entry("lodestone", "block/lodestone_side"),
+        java.util.Map.entry("decorated_pot", "block/decorated_pot_side"),
+        java.util.Map.entry("oak_slab", "block/oak_planks"),
+        // Animated items — texture is at `<name>_00.png` (first animation frame).
+        java.util.Map.entry("clock", "item/clock_00"),
+        java.util.Map.entry("compass", "item/compass_00"),
+        java.util.Map.entry("recovery_compass", "item/recovery_compass_00"),
+        java.util.Map.entry("light", "item/light_00"),
+        // Copper chest variants — 3D entity model, flat fallback to copper block.
+        java.util.Map.entry("copper_chest", "block/copper_block"),
+        java.util.Map.entry("exposed_copper_chest", "block/exposed_copper"),
+        java.util.Map.entry("weathered_copper_chest", "block/weathered_copper"),
+        java.util.Map.entry("oxidized_copper_chest", "block/oxidized_copper"),
+        java.util.Map.entry("waxed_copper_chest", "block/copper_block"),
+        java.util.Map.entry("waxed_exposed_copper_chest", "block/exposed_copper"),
+        java.util.Map.entry("waxed_weathered_copper_chest", "block/weathered_copper"),
+        java.util.Map.entry("waxed_oxidized_copper_chest", "block/oxidized_copper"),
+        // Heads/skulls — 3D-only models with no flat texture; use a recognizable themed fallback.
+        java.util.Map.entry("player_head", "block/note_block"),
+        java.util.Map.entry("zombie_head", "item/rotten_flesh"),
+        java.util.Map.entry("creeper_head", "item/gunpowder"),
+        java.util.Map.entry("skeleton_skull", "item/bone"),
+        java.util.Map.entry("wither_skeleton_skull", "item/coal"),
+        java.util.Map.entry("dragon_head", "item/dragon_breath"),
+        java.util.Map.entry("piglin_head", "item/gold_ingot"),
+        // 3D-only blocks with reasonable flat fallbacks.
+        java.util.Map.entry("crafter", "block/crafter_top"),
+        java.util.Map.entry("vault", "block/vault_top"),
+        java.util.Map.entry("trial_spawner", "block/trial_spawner_top_inactive"),
+        java.util.Map.entry("chiseled_bookshelf", "block/chiseled_bookshelf_side"),
+        // 26.1 dried ghast (4 hydration stages × multi-face) — use stage 0 north face as flat icon.
+        java.util.Map.entry("dried_ghast", "block/dried_ghast_hydration_0_north"),
+        // Copper golem statues — 3D entity models with no flat texture; fall back to corresponding copper block.
+        java.util.Map.entry("copper_golem_statue", "block/copper_block"),
+        java.util.Map.entry("exposed_copper_golem_statue", "block/exposed_copper"),
+        java.util.Map.entry("weathered_copper_golem_statue", "block/weathered_copper"),
+        java.util.Map.entry("oxidized_copper_golem_statue", "block/oxidized_copper"),
+        java.util.Map.entry("waxed_copper_golem_statue", "block/copper_block"),
+        java.util.Map.entry("waxed_exposed_copper_golem_statue", "block/exposed_copper"),
+        java.util.Map.entry("waxed_weathered_copper_golem_statue", "block/weathered_copper"),
+        java.util.Map.entry("waxed_oxidized_copper_golem_statue", "block/oxidized_copper"),
+        // Enchanted golden apple — own texture renders oddly; reuse plain golden apple icon.
+        java.util.Map.entry("enchanted_golden_apple", "item/golden_apple")
+    );
+
+    // Block-suffix patterns — items ending in these get textures from textures/block/
+    private static final String[] BLOCK_SUFFIXES = {
+        "_planks", "_log", "_wood", "_leaves", "_sapling", "_block", "_ore",
+        "_terracotta", "_wool", "_concrete", "_concrete_powder", "_glass", "_glass_pane",
+        "_slab", "_stairs", "_fence", "_fence_gate", "_wall", "_door", "_trapdoor",
+        "_carpet", "_bed", "_banner", "_button", "_pressure_plate", "_sign", "_hanging_sign",
+        "_stem", "_hyphae", "_stripped_log", "_stripped_wood", "_pillar", "_bricks", "_brick",
+        "_tiles", "_tile", "_shulker_box", "_candle", "_coral", "_coral_block", "_coral_fan",
+        "_kelp", "_seagrass", "_grass", "_fern", "_mushroom", "_mushroom_block", "_roots",
+        "_pumpkin", "_melon", "_sand", "_sandstone", "_gravel", "_dirt", "_clay", "_ice",
+        "_snow", "_obsidian", "_basalt", "_deepslate", "_tuff", "_calcite", "_amethyst",
+        "_copper", "_amethyst_cluster", "_bud", "_wart_block", "_nylium", "_nether_bricks"
+    };
+
+    // Shape suffixes — items in this category typically have NO own texture and reuse the base block's
+    // (or the base material's wool texture for color-based items like beds/banners/carpets).
+    // Order matters: longer/more specific suffixes must come first so we don't accidentally strip
+    // "_fence" from "_fence_gate" or "_banner" from "_wall_banner".
+    private static final String[] SHAPE_SUFFIXES = {
+        "_wall_banner", "_fence_gate", "_pressure_plate", "_hanging_sign",
+        "_slab", "_stairs", "_wall", "_fence",
+        "_button", "_sign", "_carpet", "_banner", "_bed",
+        "_door", "_trapdoor"
+    };
+
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> TEXTURE_PATH_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static boolean textureExists(String namespace, String subpath) {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (mc == null || mc.getResourceManager() == null) return false;
+        try {
+            return mc.getResourceManager().getResource(
+                net.minecraft.resources.Identifier.parse(namespace + ":textures/" + subpath + ".png")).isPresent();
+        } catch (Throwable t) { return false; }
+    }
+
+    private static String resolveTexturePath(String namespace, String path) {
+        String cacheKey = namespace + ":" + path;
+        String cached = TEXTURE_PATH_CACHE.get(cacheKey);
+        if (cached != null) return cached;
+
+        String resolved = TEXTURE_NAME_OVERRIDES.get(path);
+        boolean fromOverride = resolved != null;
+        if (resolved == null) resolved = findTexture(namespace, path);
+
+        // Diagnostic: log first 30 unique resolutions, especially barrier fallbacks.
+        if (TEXTURE_PATH_CACHE.size() < 30 || "item/barrier".equals(resolved)) {
+            LOGGER.info("[InvOrg26.1] resolve {}:{} -> {} (override={})", namespace, path, resolved, fromOverride);
+        }
+
+        TEXTURE_PATH_CACHE.put(cacheKey, resolved);
+        return resolved;
+    }
+
+    private static String findTexture(String namespace, String path) {
+        boolean isBlock = false;
+        for (String suffix : BLOCK_SUFFIXES) {
+            if (path.endsWith(suffix)) { isBlock = true; break; }
+        }
+
+        // Spawn eggs: 80+ items, all use the same shared texture with tinting we can't apply here.
+        if (path.endsWith("_spawn_egg") && textureExists(namespace, "item/spawn_egg")) return "item/spawn_egg";
+
+        // 1. Direct lookups — item/ first for non-block names, otherwise block/ first.
+        if (!isBlock && textureExists(namespace, "item/" + path)) return "item/" + path;
+        if (textureExists(namespace, "block/" + path)) return "block/" + path;
+        if (textureExists(namespace, "item/" + path)) return "item/" + path;
+
+        // 1a. Animated / state-based items — texture file is `<name>_00.png` or `<name>_0.png` (first frame/state).
+        //     Handles compass, clock, recovery_compass, light (`_00`) AND suspicious_sand, suspicious_gravel (`_0`).
+        if (textureExists(namespace, "item/" + path + "_00")) return "item/" + path + "_00";
+        if (textureExists(namespace, "block/" + path + "_00")) return "block/" + path + "_00";
+        if (textureExists(namespace, "item/" + path + "_0")) return "item/" + path + "_0";
+        if (textureExists(namespace, "block/" + path + "_0")) return "block/" + path + "_0";
+
+        // 1b. Wood / hyphae aliases — `<wood>_wood` uses `<wood>_log` texture (bark side);
+        //                            `<wood>_hyphae` uses `<wood>_stem` (nether wood).
+        //     Handles birch_wood, cherry_wood, dark_oak_wood, stripped_<wood>_wood, crimson_hyphae, warped_hyphae etc.
+        if (path.endsWith("_wood")) {
+            String logName = path.substring(0, path.length() - "_wood".length()) + "_log";
+            if (textureExists(namespace, "block/" + logName)) return "block/" + logName;
+        }
+        if (path.endsWith("_hyphae")) {
+            String stemName = path.substring(0, path.length() - "_hyphae".length()) + "_stem";
+            if (textureExists(namespace, "block/" + stemName)) return "block/" + stemName;
+        }
+
+        // 1c. Multi-face blocks ending in _block (or any block name) — try base/_side/_top/_bottom suffixes.
+        //     Handles snow_block (→ block/snow), dried_kelp_block, hay_block, mushroom_block variants, etc.
+        if (path.endsWith("_block")) {
+            String stripped = path.substring(0, path.length() - "_block".length());
+            if (textureExists(namespace, "block/" + stripped)) return "block/" + stripped;
+            if (textureExists(namespace, "block/" + stripped + "_side")) return "block/" + stripped + "_side";
+            if (textureExists(namespace, "block/" + stripped + "_top")) return "block/" + stripped + "_top";
+            if (textureExists(namespace, "block/" + stripped + "_bottom")) return "block/" + stripped + "_bottom";
+        }
+
+        // 1b. Multi-face blocks: try _front / _top / _side / _side1 (e.g. crafter, decorated_pot, conduit variants).
+        if (textureExists(namespace, "block/" + path + "_front")) return "block/" + path + "_front";
+        if (textureExists(namespace, "block/" + path + "_top")) return "block/" + path + "_top";
+        if (textureExists(namespace, "block/" + path + "_side")) return "block/" + path + "_side";
+
+        // 2. Shape-suffix stripping: <base>_slab/_stairs/_wall/etc. has no own texture in Minecraft —
+        //    those reuse the base block's texture (e.g. mossy_cobblestone_slab → mossy_cobblestone.png).
+        for (String suffix : SHAPE_SUFFIXES) {
+            if (!path.endsWith(suffix)) continue;
+            String base = path.substring(0, path.length() - suffix.length());
+
+            // 2a. Direct base block.
+            if (textureExists(namespace, "block/" + base)) return "block/" + base;
+            // 2b. Singular → plural for _brick and _tile (mossy_stone_brick_slab → mossy_stone_bricks; deepslate_tile_slab → deepslate_tiles).
+            if (base.endsWith("_brick") && textureExists(namespace, "block/" + base + "s")) return "block/" + base + "s";
+            if (base.endsWith("_tile") && textureExists(namespace, "block/" + base + "s")) return "block/" + base + "s";
+            // 2c. Wood-shape items use planks (oak_button, pale_oak_pressure_plate → <wood>_planks).
+            if (textureExists(namespace, "block/" + base + "_planks")) return "block/" + base + "_planks";
+            // 2d. Multi-face base block (e.g. furnace_button → furnace_front).
+            if (textureExists(namespace, "block/" + base + "_top")) return "block/" + base + "_top";
+            if (textureExists(namespace, "block/" + base + "_side")) return "block/" + base + "_side";
+            if (textureExists(namespace, "block/" + base + "_front")) return "block/" + base + "_front";
+            // 2e. Doors/trapdoors keep their own name suffixes.
+            if (textureExists(namespace, "block/" + path + "_bottom")) return "block/" + path + "_bottom";
+            if (textureExists(namespace, "block/" + path + "_top")) return "block/" + path + "_top";
+            // 2f. Color-based items (beds, banners, carpets, wall_banners) — use the color's wool texture.
+            if (textureExists(namespace, "block/" + base + "_wool")) return "block/" + base + "_wool";
+            // 2g. Try item/<base> too in case there's a flat icon for the base material.
+            if (textureExists(namespace, "item/" + base)) return "item/" + base;
+            // 2h. Try <base>_block (purpur_slab → purpur_block) and <base>_block_top (quartz_slab → quartz_block_top).
+            if (textureExists(namespace, "block/" + base + "_block")) return "block/" + base + "_block";
+            if (textureExists(namespace, "block/" + base + "_block_top")) return "block/" + base + "_block_top";
+            // 2i. Recursive retry: resolve the stripped base via full findTexture so smooth_/waxed_/etc. handlers fire.
+            //     Handles smooth_quartz_slab → smooth_quartz → quartz_block_top.
+            String recursive = findTexture(namespace, base);
+            if (!"item/barrier".equals(recursive)) return recursive;
+            break;
+        }
+
+        // 3. Sapling/log fallback — items like polished_<X> where X has its own texture.
+        if (path.startsWith("polished_") && textureExists(namespace, "block/" + path.substring("polished_".length()))) {
+            return "block/" + path.substring("polished_".length());
+        }
+
+        // 3b. Smooth variants — smooth_sandstone, smooth_red_sandstone, smooth_quartz, smooth_basalt, smooth_stone.
+        //     Some have own texture (smooth_basalt, smooth_stone) — covered by direct lookup.
+        //     Others reuse the base block's _top face (smooth_sandstone → sandstone_top, smooth_quartz → quartz_block_top).
+        if (path.startsWith("smooth_")) {
+            String base = path.substring("smooth_".length());
+            if (textureExists(namespace, "block/" + base + "_top")) return "block/" + base + "_top";
+            if (textureExists(namespace, "block/" + base + "_block_top")) return "block/" + base + "_block_top";
+            if (textureExists(namespace, "block/" + base)) return "block/" + base;
+        }
+
+        // 4. Waxed copper variants — wax doesn't change appearance; recurse with the non-waxed name
+        //    so ALL the above logic (direct lookup, shape strip, multi-face, etc.) applies.
+        //    Handles waxed_copper_block, waxed_oxidized_cut_copper_stairs, waxed_<patina>_copper_door, etc.
+        if (path.startsWith("waxed_")) {
+            String unwaxed = path.substring("waxed_".length());
+            String resolved = findTexture(namespace, unwaxed);
+            if (!"item/barrier".equals(resolved)) return resolved;
+        }
+
+        // 4a. Infested blocks — silverfish hidden inside; visually identical to base block.
+        //     Handles infested_stone, infested_cobblestone, infested_(stone|mossy_stone|cracked_stone|chiseled_stone)_bricks, infested_deepslate.
+        if (path.startsWith("infested_")) {
+            String base = path.substring("infested_".length());
+            String resolved = findTexture(namespace, base);
+            if (!"item/barrier".equals(resolved)) return resolved;
+        }
+
+        // 4b. Petrified blocks — only petrified_oak_slab exists; reuse oak_planks.
+        if (path.startsWith("petrified_")) {
+            String base = path.substring("petrified_".length());
+            String resolved = findTexture(namespace, base);
+            if (!"item/barrier".equals(resolved)) return resolved;
+        }
+
+        // 4b. Generic prefix-strip retry — if path starts with a common adjective, retry with the bare material.
+        //     Handles chiseled_*, cut_*, cracked_*, etc. where the smooth/cut/chiseled variant uses the base block.
+        for (String prefix : new String[]{"chiseled_", "cut_", "cracked_"}) {
+            if (path.startsWith(prefix)) {
+                String unprefixed = path.substring(prefix.length());
+                if (textureExists(namespace, "block/" + unprefixed)) return "block/" + unprefixed;
+            }
+        }
+
+        // 5. Final fallback: barrier icon — visibly missing but doesn't crash.
+        return "item/barrier";
+    }
+
+    public static void drawItemIcon(net.minecraft.client.gui.GuiGraphicsExtractor context, net.minecraft.world.item.ItemStack stack, int x, int y) {
+        if (stack == null || stack.isEmpty()) return;
+        try {
+            net.minecraft.world.item.Item item = stack.getItem();
+            net.minecraft.resources.Identifier key = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(item);
+            if (key == null) return;
+            String texSubpath = resolveTexturePath(key.getNamespace(), key.getPath());
+            net.minecraft.resources.Identifier tex = net.minecraft.resources.Identifier.parse(
+                key.getNamespace() + ":textures/" + texSubpath + ".png");
+            // 26.1 classic blit: (pipeline, id, x, y, u, v, width, height, textureWidth, textureHeight)
+            context.blit(net.minecraft.client.renderer.RenderPipelines.GUI_TEXTURED,
+                tex, x, y, 0f, 0f, 16, 16, 16, 16);
+        } catch (Throwable ignored) {}
+    }
+
 }
+

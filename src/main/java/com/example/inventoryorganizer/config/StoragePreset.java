@@ -1,13 +1,48 @@
 package com.example.inventoryorganizer.config;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
+/**
+ * A storage layout (slot rules + tier assignments) that can be applied to a container.
+ *
+ * <p>Two kinds exist:
+ * <ul>
+ *   <li><b>Defaults</b> ({@code isDefault == true}): the built-in "Container" and "Large Chest"
+ *       layouts. They are protected (cannot be renamed or deleted) and act as the size-based
+ *       fallback when an opened chest has no per-chest profile bound to it. (A third default,
+ *       "Bundle", used to exist here as a crude bundle content-rule source; it was removed in
+ *       favor of the real Bundle Profiles feature — see {@link OrganizerConfig#getBundleProfiles()}.)</li>
+ *   <li><b>Per-chest profiles</b> ({@code isDefault == false}): user-created layouts bound to a
+ *       physical chest, matched by {@link #customName} (anvil name) or {@link #positions}
+ *       (coordinates). A profile is "carried" by the mod until its chest is opened.</li>
+ * </ul>
+ *
+ * <p>{@link #id} is stable for the lifetime of the profile and is what tier assignments are keyed
+ * by ({@code tier_order_storage_<id>} in {@link OrganizerConfig}). The three defaults keep ids
+ * 0/1/2 so existing saved tier data stays valid.
+ */
 public class StoragePreset {
     private String name;
     private int size; // 27 = chest, 54 = large chest
     private Map<String, String> slotRules = new HashMap<>();
     private Map<String, Integer> tierAssignments = new HashMap<>();
+
+    // ===== Per-chest profile fields (defaults leave these at their neutral values) =====
+    private int id = -1;                  // stable identity; -1 until assigned
+    private boolean isDefault = false;    // protected built-in (Container/Large Chest/Bundle)
+    private String customName = null;     // anvil custom name this profile is bound to (match key)
+    private String signText = null;       // text of an adjacent sign this profile is bound to (match key)
+    private List<int[]> positions = null; // chest BlockPos(es) this profile is bound to ([x,y,z])
+    // World/dimension key PARALLEL to `positions` (same index) — see OrganizerConfig's matching fields
+    // for why this exists: the config is one global file shared across every world/server ever played,
+    // so a bare x,y,z is ambiguous once you've bound profiles in more than one world. A missing/short
+    // entry (pre-existing configs) means that position predates this feature and is treated as a
+    // WILDCARD (matches in any world) rather than being force-assigned to a single world.
+    private List<String> positionWorlds = null;
+    private String shulkerId = null;      // mod-assigned UUID for shulker boxes (survives break/place)
 
     public StoragePreset() {
         this.name = "Preset";
@@ -66,5 +101,142 @@ public class StoragePreset {
 
     public void removeTier(int slot) {
         if (tierAssignments != null) tierAssignments.remove(String.valueOf(slot));
+    }
+
+    // ===== Per-chest profile accessors =====
+
+    public int getId() { return id; }
+    public void setId(int id) { this.id = id; }
+
+    public boolean isDefault() { return isDefault; }
+    public void setDefault(boolean isDefault) { this.isDefault = isDefault; }
+
+    public String getCustomName() { return customName; }
+    public void setCustomName(String customName) {
+        this.customName = (customName != null && !customName.isEmpty()) ? customName : null;
+    }
+
+    public String getSignText() { return signText; }
+    public void setSignText(String signText) {
+        this.signText = (signText != null && !signText.isEmpty()) ? signText : null;
+    }
+
+    /** Match by adjacent-sign text (case-insensitive, trimmed). */
+    public boolean matchesSign(String sign) {
+        return signText != null && sign != null && signText.equalsIgnoreCase(sign.trim());
+    }
+
+    public List<int[]> getPositions() {
+        if (positions == null) positions = new ArrayList<>();
+        return positions;
+    }
+
+    public List<String> getPositionWorlds() {
+        if (positionWorlds == null) positionWorlds = new ArrayList<>();
+        return positionWorlds;
+    }
+
+    /** Replace the whole position list (e.g. re-pointing a name-matched profile after relocation).
+     *  All entries are tagged with the CURRENT world, since this always runs while an actual chest in
+     *  an actual world was just interacted with. */
+    public void setPositions(List<int[]> positions) {
+        this.positions = positions;
+        String w;
+        try {
+            w = com.example.inventoryorganizer.WorldScope.key(net.minecraft.client.Minecraft.getInstance().level);
+        } catch (Throwable t) {
+            w = null;
+        }
+        List<String> worlds = new ArrayList<>();
+        if (positions != null) for (int i = 0; i < positions.size(); i++) worlds.add(w != null ? w : "");
+        this.positionWorlds = worlds;
+    }
+
+    public void clearPositions() {
+        if (positions != null) positions.clear();
+        if (positionWorlds != null) positionWorlds.clear();
+    }
+
+    /** Bind this profile to a block position (deduplicated) in the CURRENT world/dimension. Used when
+     *  first attaching to a chest. */
+    public void addPosition(int x, int y, int z) {
+        List<int[]> list = getPositions();
+        for (int[] p : list) {
+            if (p.length == 3 && p[0] == x && p[1] == y && p[2] == z) return;
+        }
+        list.add(new int[]{x, y, z});
+        String w;
+        try {
+            w = com.example.inventoryorganizer.WorldScope.key(net.minecraft.client.Minecraft.getInstance().level);
+        } catch (Throwable t) {
+            w = null;
+        }
+        getPositionWorlds().add(w != null ? w : "");
+    }
+
+    public String getShulkerId() { return shulkerId; }
+    public void setShulkerId(String shulkerId) {
+        this.shulkerId = (shulkerId != null && !shulkerId.isEmpty()) ? shulkerId : null;
+    }
+
+    /** True when {@code id} matches this profile's shulker UUID (exact). */
+    public boolean matchesShulkerId(String id) {
+        return shulkerId != null && shulkerId.equals(id);
+    }
+
+    /** True when this profile is bound to a chest by name, sign or coordinates (i.e. not a bare default). */
+    public boolean isBound() {
+        return (customName != null && !customName.isEmpty())
+                || (signText != null && !signText.isEmpty())
+                || (positions != null && !positions.isEmpty())
+                || (shulkerId != null && !shulkerId.isEmpty());
+    }
+
+    /** Match by anvil custom name (case-sensitive, exact) — survives relocation. */
+    public boolean matchesName(String chestCustomName) {
+        return customName != null && !customName.isEmpty() && customName.equals(chestCustomName);
+    }
+
+    /** Match by coordinates within {@code tolerance} blocks on each axis (covers single↔double conversion),
+     *  restricted to the CURRENT world/dimension unless that position predates world-scoping (wildcard)
+     *  or the current world can't be determined. Without this, the same coordinates in two different
+     *  worlds/servers (the whole config is one global file) would match a profile that isn't actually
+     *  there. */
+    public boolean matchesPosition(int x, int y, int z, int tolerance) {
+        if (positions == null) return false;
+        String current;
+        try {
+            current = com.example.inventoryorganizer.WorldScope.key(net.minecraft.client.Minecraft.getInstance().level);
+        } catch (Throwable t) {
+            current = null;
+        }
+        List<String> worlds = positionWorlds;
+        for (int i = 0; i < positions.size(); i++) {
+            int[] p = positions.get(i);
+            if (p.length != 3) continue;
+            if (Math.abs(p[0] - x) <= tolerance
+                    && Math.abs(p[1] - y) <= tolerance
+                    && Math.abs(p[2] - z) <= tolerance) {
+                String tag = (worlds != null && i < worlds.size() && worlds.get(i) != null && !worlds.get(i).isEmpty())
+                        ? worlds.get(i) : null;
+                if (tag == null || current == null || tag.equals(current)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Deep copy used for duplication. The copy is never a default and starts unbound. */
+    public StoragePreset copy() {
+        StoragePreset c = new StoragePreset();
+        c.name = this.name;
+        c.size = this.size;
+        c.slotRules = new HashMap<>(getSlotRulesMap());
+        c.tierAssignments = new HashMap<>(getTierAssignmentsMap());
+        c.isDefault = false;
+        c.customName = null;     // a duplicate is not yet attached to any chest
+        c.signText = null;
+        c.positions = new ArrayList<>();
+        // id is assigned by OrganizerConfig when the copy is added
+        return c;
     }
 }

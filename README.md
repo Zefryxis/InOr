@@ -1,6 +1,6 @@
 # Inventory Organizer
 
-![Minecraft 26.1+](https://img.shields.io/badge/Minecraft-26.1%2B-brightgreen)
+![Minecraft 26.2+](https://img.shields.io/badge/Minecraft-26.2%2B-brightgreen)
 ![Fabric](https://img.shields.io/badge/Fabric-1.0-blue)
 ![License: ARR](https://img.shields.io/badge/License-All%20Rights%20Reserved-red)
 [![Download on Modrinth](https://img.shields.io/modrinth/dt/inventory-organizer?label=Modrinth%20Downloads&color=00CC44)](https://modrinth.com/mod/inventory-organizer)
@@ -56,14 +56,14 @@ English, Hungarian (Magyar), Deutsch, Español, Français, 中文, 日本語, Р
 ## Installation
 
 ### Requirements
-- **Minecraft:** 26.1, 26.1.1, or 26.1.2
+- **Minecraft:** 26.2+
 - **Fabric Loader:** >= 0.19
 - **Fabric API:** any recent version
 
 ### Download
 **Official source:** [Modrinth — Inventory Organizer](https://modrinth.com/mod/inventory-organizer)
 
-- Choose your Minecraft version (26.1 / 26.1.1 / 26.1.2) and download the `.jar`
+- Choose your Minecraft version (26.2+) and download the `.jar`
 - Drop it in your `mods/` folder
 - Launch Minecraft with the Fabric profile
 

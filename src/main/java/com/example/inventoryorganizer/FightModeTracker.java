@@ -1,6 +1,6 @@
 package com.example.inventoryorganizer;
 
-import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.components.Button;
 
 import java.security.SecureRandom;
 import java.util.concurrent.ConcurrentLinkedDeque;
@@ -31,7 +31,7 @@ public final class FightModeTracker {
     private FightModeTracker() {}
 
     /** Set by InventoryScreenMixin on init; used by ClientTickEvents to re-enable OI button. */
-    public static volatile ButtonWidget oiButtonRef = null;
+    public static volatile Button oiButtonRef = null;
 
     // ---- Primary + redundant state (all private) --------------------------
     private static final long XOR_KEY = new SecureRandom().nextLong();
@@ -104,13 +104,36 @@ public final class FightModeTracker {
         }
     }
 
-    /** Returns true if fight mode is currently active. Self-heals state on read. */
+    /**
+     * Returns true if the fight-mode throttle is active right now. This is the case either because
+     * of recent combat ({@link #isCombatActive()}) OR because the player is on a public server where
+     * Server-Friendly is forced ({@link #isSfForced()}) — on such servers the mod behaves as if fight
+     * mode were permanently on (one item per press, etc.) unless the server is whitelisted.
+     */
     public static boolean isActive() {
+        return isCombatActive() || isSfForced();
+    }
+
+    /** Returns true only when RECENT COMBAT keeps fight mode active (the 20s window). Self-heals on read. */
+    public static boolean isCombatActive() {
         long effective = computeMax();
         if (effective <= 0) return false;
         boolean active = (System.currentTimeMillis() - effective) < FIGHT_DURATION_MS;
         if (active) heal();
         return active;
+    }
+
+    /**
+     * True when on a PUBLIC server (not a private/whitelisted environment) → Server-Friendly is forced
+     * and the fight-mode throttle stays permanently on. Single player, LAN, Realms, known-friendly
+     * hosts and whitelisted servers are exempt. Returns false outside of a world (main menu).
+     */
+    public static boolean isSfForced() {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (mc == null) return false;
+        if (mc.hasSingleplayerServer()) return false;   // single player / LAN host = private
+        if (mc.getConnection() == null) return false;    // not connected to any world
+        return !ServerEnvironment.isPrivateEnvironment(); // public, un-whitelisted server → forced
     }
 
     /** Remaining milliseconds before fight mode expires (0 if not active). */

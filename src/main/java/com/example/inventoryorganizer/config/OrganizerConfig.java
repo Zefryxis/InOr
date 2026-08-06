@@ -25,6 +25,14 @@ public class OrganizerConfig {
     // Slot rules: key = player inventory slot (0-35), value = rule
     private Map<String, SlotRule> slotRules = new HashMap<>();
 
+    // Auto-switch mode's inventory rules (slot 0-35). Mirrors the plain rules for everything EXCEPT
+    // tool/weapon slots, which are independent per mode (see setInventoryRule / isToolRule). When a slot
+    // has no auto entry, it falls back to the plain rule (so non-tool changes mirror automatically).
+    private Map<String, SlotRule> autoSlotRules = new HashMap<>();
+    /** When true, getSlotRule() serves the Auto-switch rule set (set transiently around an SP auto sort). */
+    private static boolean autoRuleActive = false;
+    public static void setAutoRuleActive(boolean v) { autoRuleActive = v; }
+
     // Item preferences per category: key = group name, value = ordered list of preferred item ids
     private Map<String, String[]> preferences = new HashMap<>();
 
@@ -45,6 +53,52 @@ public class OrganizerConfig {
     // Storage device presets (3 configurable chest/container layouts)
     private List<StoragePreset> storagePresets = new ArrayList<>();
 
+    // Bundle profiles: each profile defines item rules for a specific bundle
+    private List<BundleProfile> bundleProfiles = new ArrayList<>();
+
+    // Warehouse chest links: pressing OST at any member sorts the whole group (server-side).
+    private List<WarehouseGroup> warehouseGroups = new ArrayList<>();
+
+    // Warehouse map visibility: chests the player has actually opened (shown on the map), and chests
+    // the player chose "Nothing" for (hidden from the map). Each entry = {x, y, z}.
+    private List<int[]> knownChests = new ArrayList<>();
+    private List<int[]> nothingChests = new ArrayList<>();
+    // Positions of "generic" containers — chest-like screens from OTHER mods we can't identify by item/
+    // icon. They appear on the warehouse map with a ring marker (○) instead of a chest glyph.
+    private List<int[]> genericChests = new ArrayList<>();
+
+    // World/dimension key PARALLEL to each list above (same index), added because this whole config
+    // file is a SINGLE GLOBAL JSON shared across every world and server the player has ever played on
+    // — without this, a chest at the same (x,y,z) in two different worlds/servers was indistinguishable.
+    // NEW fields (not renaming the ones above) so existing configs still parse exactly as before — a
+    // list shorter than its position list (or entirely absent, on an old config) means those entries
+    // predate this feature and are treated as a WILDCARD (match in any world) rather than force-
+    // reassigning them to whichever world happens to be open first after updating, which could silently
+    // "lose" a binding the player still uses on a different world/server.
+    private List<String> knownChestWorlds = new ArrayList<>();
+    private List<String> nothingChestWorlds = new ArrayList<>();
+    private List<String> genericChestWorlds = new ArrayList<>();
+
+    // Configurable HUD overlay: per-element visibility + fractional screen position. All off by default.
+    private HudSettings hud = new HudSettings();
+
+    // Remote Crafting panel layout: chest-list side, buttons-section side, deposit-button drag state.
+    private RemoteCraftHudSettings remoteCraftHud = new RemoteCraftHudSettings();
+
+    // Remote crafting: when filling a recipe, prefer pulling ingredients from nearby chests (true) vs
+    // using the player's own inventory first (false). Default: prefer chests.
+    private boolean craftPreferChests = true;
+
+    // Auto-refill master switch (toggled by keybind). When false, ↻-marked slots are NOT auto-refilled
+    // in free mode. The manual chest-refill (button/keybind) is unaffected. Default on.
+    private boolean autoRefillEnabled = true;
+
+    // Scroll-to-move master switch: scrolling over a hovered item quick-moves it (chest<->inventory),
+    // and a directional scroll with nothing hovered does a one-item transfer. Some players find this
+    // surprising (e.g. an incidental scroll while doing something unrelated moving an item they didn't
+    // mean to touch) and want it off entirely. Default on (existing behaviour unchanged).
+    private boolean scrollMoveEnabled = true;
+
     // Special slot keys for armor and offhand
     public static final String SLOT_ARMOR_HEAD = "armor_head";
     public static final String SLOT_ARMOR_CHEST = "armor_chest";
@@ -62,10 +116,14 @@ public class OrganizerConfig {
         for (String key : EQUIPMENT_SLOTS) {
             slotRules.put(key, new SlotRule());
         }
-        // Default storage presets
+        // Default storage presets (protected; act as the size-based fallback for unbound chests).
+        // There used to be a third default, "Bundle" (a 27-slot rule grid reused as a crude bundle
+        // content-rule source) — removed: it never worked for filling bundles (see buildBundleAssignments)
+        // and duplicated the real Bundle Profiles feature. Bundles are exclusively driven by
+        // BundleProfile rules now (see getBundleProfiles()).
         storagePresets.add(new StoragePreset("Container", 27));
         storagePresets.add(new StoragePreset("Large Chest", 54));
-        storagePresets.add(new StoragePreset("Bundle", 27));
+        normalizeProfiles();
 
         // Default preferences: material order per item type (best first)
         String[] tierOrder = {"netherite", "diamond", "iron", "golden", "stone", "wooden"};
@@ -101,9 +159,90 @@ public class OrganizerConfig {
         return INSTANCE;
     }
 
+    /** Configurable HUD overlay settings (never null). */
+    public HudSettings getHud() {
+        if (hud == null) hud = new HudSettings();
+        return hud;
+    }
+
+    /** Remote Crafting panel layout settings (never null). */
+    public RemoteCraftHudSettings getRemoteCraftHud() {
+        if (remoteCraftHud == null) remoteCraftHud = new RemoteCraftHudSettings();
+        return remoteCraftHud;
+    }
+
+    /** Remote crafting: prefer pulling recipe ingredients from chests over the player's inventory. */
+    public boolean isCraftPreferChests() { return craftPreferChests; }
+    public void setCraftPreferChests(boolean v) { craftPreferChests = v; }
+
+    public boolean isAutoRefillEnabled() { return autoRefillEnabled; }
+    public void setAutoRefillEnabled(boolean v) { autoRefillEnabled = v; }
+
+    public boolean isScrollMoveEnabled() { return scrollMoveEnabled; }
+    public void setScrollMoveEnabled(boolean v) { scrollMoveEnabled = v; }
+
     public SlotRule getSlotRule(int slot) {
+        if (autoRuleActive) {
+            SlotRule a = autoSlotRules.get(String.valueOf(slot));
+            if (a != null) return a;
+        }
         SlotRule rule = slotRules.get(String.valueOf(slot));
         return rule != null ? rule : new SlotRule();
+    }
+
+    /** Read an inventory rule for the Auto ({@code auto=true}) or Plain rule set explicitly. The two rule
+     *  sets are fully independent — no fallback between them. */
+    public SlotRule getInventoryRule(int slot, boolean auto) {
+        String k = String.valueOf(slot);
+        Map<String, SlotRule> map = auto ? autoSlotRules : slotRules;
+        SlotRule r = map.get(k);
+        return r != null ? r : new SlotRule();
+    }
+
+    /** Write an inventory rule into the Auto or Plain set. The two sets are fully independent. */
+    public void setInventoryRule(int slot, SlotRule rule, boolean auto) {
+        String k = String.valueOf(slot);
+        if (auto) autoSlotRules.put(k, rule);
+        else slotRules.put(k, rule);
+    }
+
+    /** Copy all inventory slot rules from one mode to the other (one-shot sync button). */
+    public void copyRulesToOtherMode(boolean fromAuto) {
+        Map<String, SlotRule> src = fromAuto ? autoSlotRules : slotRules;
+        Map<String, SlotRule> dst = fromAuto ? slotRules : autoSlotRules;
+        dst.clear();
+        for (Map.Entry<String, SlotRule> e : src.entrySet()) dst.put(e.getKey(), e.getValue().copy());
+    }
+
+    /** A slot rule that targets a tool/weapon (so it must NOT mirror between Plain and Auto modes). */
+    public static boolean isToolRule(SlotRule r) {
+        if (r == null) return false;
+        switch (r.getType()) {
+            case SPECIFIC: {
+                String v = r.getValue().toLowerCase();
+                return v.contains("sword") || v.contains("axe") || v.contains("pickaxe")
+                        || v.contains("shovel") || v.contains("hoe");
+            }
+            case GROUP: case CUSTOM_GROUP: {
+                String v = r.getValue().toLowerCase();
+                return v.equals("weapons") || v.equals("tools") || v.equals("swords")
+                        || v.equals("pickaxes") || v.equals("axes") || v.equals("shovels") || v.equals("hoes");
+            }
+            case SPECIFIC_ITEM: return isToolItem(r.getValue());
+            default: return false;
+        }
+    }
+
+    private static boolean isToolItem(String id) {
+        try {
+            net.minecraft.world.item.Item it = net.minecraft.core.registries.BuiltInRegistries.ITEM
+                    .getValue(net.minecraft.resources.Identifier.tryParse(id));
+            if (it == null) return false;
+            net.minecraft.world.item.ItemStack s = new net.minecraft.world.item.ItemStack(it);
+            return s.is(net.minecraft.tags.ItemTags.SWORDS) || s.is(net.minecraft.tags.ItemTags.AXES)
+                    || s.is(net.minecraft.tags.ItemTags.PICKAXES) || s.is(net.minecraft.tags.ItemTags.SHOVELS)
+                    || s.is(net.minecraft.tags.ItemTags.HOES);
+        } catch (Throwable ignored) { return false; }
     }
 
     public SlotRule getSlotRuleByKey(String key) {
@@ -117,6 +256,24 @@ public class OrganizerConfig {
 
     public void setSlotRuleByKey(String key, SlotRule rule) {
         slotRules.put(key, rule);
+    }
+
+    /** Whether the given player inventory slot (0-35) is flagged for auto-refill (free mode only).
+     *  The refill flag is slot-level metadata independent of which rule-set (plain vs auto) the user
+     *  edited it from, so we check both maps. */
+    public boolean isSlotRefill(int slot) {
+        String k = String.valueOf(slot);
+        SlotRule r = slotRules.get(k);
+        if (r != null && r.isRefill()) return true;
+        r = autoSlotRules.get(k);
+        return r != null && r.isRefill();
+    }
+
+    /** Toggle the auto-refill flag for a slot, creating the rule entry if needed. */
+    public void setSlotRefill(int slot, boolean refill) {
+        SlotRule rule = slotRules.get(String.valueOf(slot));
+        if (rule == null) { rule = new SlotRule(); slotRules.put(String.valueOf(slot), rule); }
+        rule.setRefill(refill);
     }
 
     public Map<String, SlotRule> getSlotRules() {
@@ -160,8 +317,332 @@ public class OrganizerConfig {
     public boolean isShowHelp() { return showHelp; }
     public void setShowHelp(boolean showHelp) { this.showHelp = showHelp; }
 
+    /** Whether the user has seen the full feature guide (opened automatically on first settings entry). */
+    public boolean isHelpSeen() {
+        String[] arr = getPreference("help_seen");
+        return arr.length > 0 && "true".equals(arr[0]);
+    }
+
+    public void setHelpSeen(boolean seen) {
+        setPreference("help_seen", new String[]{seen ? "true" : "false"});
+    }
+
+    /**
+     * Whether the player has seen the animated Tutorial (auto-plays once on first launch, replayable
+     * anytime via the Tutorial button). Backed by preference key "tutorial_seen"; independent from
+     * help_seen / first_run_done so each first-run screen tracks its own "shown once" state.
+     */
+    public boolean isTutorialSeen() {
+        String[] arr = getPreference("tutorial_seen");
+        return arr.length > 0 && "true".equals(arr[0]);
+    }
+
+    public void setTutorialSeen(boolean seen) {
+        setPreference("tutorial_seen", new String[]{seen ? "true" : "false"});
+    }
+
+    // --- Complexity mode -------------------------------------------------
+    // Global UI complexity level, controlling how much of the config is exposed.
+    // Stored in the generic preferences map under key "complexity_mode".
+    //   "simple"   - only slot rules, bundle and basic toggles; one curated default system.
+    //   "advanced" - simple + custom groups and slot-tier (ranks) editing.
+    //   "expert"   - the full, everything-customizable experience (legacy behavior).
+    // Default when unset = "expert", so pre-existing users keep today's full UI and are
+    // never onboarded (see isFirstRunDone()).
+    public static final String MODE_SIMPLE = "simple";
+    public static final String MODE_ADVANCED = "advanced";
+    public static final String MODE_EXPERT = "expert";
+
+    public String getComplexityMode() {
+        String[] arr = getPreference("complexity_mode");
+        if (arr.length > 0 && arr[0] != null) {
+            String v = arr[0];
+            if (v.equals(MODE_SIMPLE) || v.equals(MODE_ADVANCED) || v.equals(MODE_EXPERT)) return v;
+        }
+        return MODE_EXPERT;
+    }
+
+    public void setComplexityMode(String mode) {
+        if (!MODE_SIMPLE.equals(mode) && !MODE_ADVANCED.equals(mode) && !MODE_EXPERT.equals(mode)) {
+            mode = MODE_EXPERT;
+        }
+        setPreference("complexity_mode", new String[]{mode});
+    }
+
+    public boolean isSimpleMode() { return MODE_SIMPLE.equals(getComplexityMode()); }
+    public boolean isAdvancedMode() { return MODE_ADVANCED.equals(getComplexityMode()); }
+    public boolean isExpertMode() { return MODE_EXPERT.equals(getComplexityMode()); }
+
+    /**
+     * Whether the one-time first-run onboarding (complexity-mode picker) has been completed.
+     * Backed by preference key "first_run_done"; absent = first run (show onboarding).
+     * Kept independent from help_seen so the feature guide behavior is unaffected.
+     */
+    public boolean isFirstRunDone() {
+        String[] arr = getPreference("first_run_done");
+        return arr.length > 0 && "true".equals(arr[0]);
+    }
+
+    public void setFirstRunDone(boolean done) {
+        setPreference("first_run_done", new String[]{done ? "true" : "false"});
+    }
+
+    /**
+     * Keybind activation mode. One of: "free", "inventory_only", "disabled".
+     * Default: "inventory_only" — keybinds only fire while the relevant screen is open.
+     * Stored in the generic preferences map under key "keybind_mode" (no schema change).
+     */
+    public String getKeybindMode() {
+        String[] arr = getPreference("keybind_mode");
+        if (arr.length > 0 && arr[0] != null && !arr[0].isEmpty()) {
+            String v = arr[0];
+            if (v.equals("free") || v.equals("inventory_only") || v.equals("disabled")) return v;
+        }
+        return "inventory_only";
+    }
+
+    public void setKeybindMode(String mode) {
+        if (!"free".equals(mode) && !"inventory_only".equals(mode) && !"disabled".equals(mode)) {
+            mode = "inventory_only";
+        }
+        setPreference("keybind_mode", new String[]{mode});
+    }
+
+    /**
+     * Sort keybind action. One of: "oi_only", "ost_only", "smart", "both".
+     * Default: "smart" — sort chest if one's open, otherwise sort player inventory.
+     * Stored under preferences key "sort_action".
+     */
+    public String getSortAction() {
+        String[] arr = getPreference("sort_action");
+        if (arr.length > 0 && arr[0] != null && !arr[0].isEmpty()) {
+            String v = arr[0];
+            if (v.equals("oi_only") || v.equals("ost_only") || v.equals("smart") || v.equals("both")) return v;
+        }
+        return "smart";
+    }
+
+    public void setSortAction(String action) {
+        if (!"oi_only".equals(action) && !"ost_only".equals(action)
+                && !"smart".equals(action) && !"both".equals(action)) {
+            action = "smart";
+        }
+        setPreference("sort_action", new String[]{action});
+    }
+
     public boolean isTierOrderUserConfigured() { return tierOrderUserConfigured; }
     public void setTierOrderUserConfigured(boolean v) { this.tierOrderUserConfigured = v; }
+
+    /**
+     * Auto-sort after death: when enough snapshotted items are recovered after dying, the
+     * inventory is sorted automatically. Opt-in (can be macro-like on servers). Default off.
+     * Stored under preferences key "death_autosort" ("true"/"false").
+     */
+    public boolean isDeathSortEnabled() {
+        String[] arr = getPreference("death_autosort");
+        return arr.length > 0 && "true".equals(arr[0]);
+    }
+
+    public void setDeathSortEnabled(boolean enabled) {
+        setPreference("death_autosort", new String[]{enabled ? "true" : "false"});
+    }
+
+    // ===== Switch (auto tool-swapper, single-player only) =====
+    // Keeps the best tool for the crosshair target in a designated hotbar "switch" slot. Targets map to a
+    // CATEGORY (the block's mineable type, or "mob"); each category points at a custom group, and among
+    // that group's items present in the inventory the material RANKS (preferences[category]) pick the piece.
+
+    /** The switch tool categories. Each maps to a fixed, editable custom group (below). */
+    public static final String[] SWITCH_CATEGORIES = {"pickaxe", "axe", "shovel", "hoe", "mob"};
+
+    /** Reserved, non-deletable custom-group names that hold each category's tools (vanilla items match by
+     *  tag automatically; these groups exist so MODDED tools can be added). category → group name. */
+    public static String switchGroupName(String category) {
+        switch (category) {
+            case "pickaxe": return "Pickaxes";
+            case "axe":     return "Axes";
+            case "shovel":  return "Shovels";
+            case "hoe":     return "Hoes";
+            case "mob":     return "Swords";
+            default:        return "Swords";
+        }
+    }
+
+    public boolean isSwitchEnabled() {
+        String[] a = getPreference("switch_enabled");
+        return a.length > 0 && "true".equals(a[0]);
+    }
+    public void setSwitchEnabled(boolean v) { setPreference("switch_enabled", new String[]{v ? "true" : "false"}); }
+
+    /** Hotbar index (0-8) of the active "switch" slot; -1 = not set. */
+    public int getSwitchSlot() {
+        String[] a = getPreference("switch_slot");
+        try { return a.length > 0 ? Integer.parseInt(a[0]) : -1; } catch (NumberFormatException e) { return -1; }
+    }
+    public void setSwitchSlot(int slot) { setPreference("switch_slot", new String[]{Integer.toString(slot)}); }
+
+    /** Air-look behaviour: "keep" (leave last tool) or "restore" (put back the previous slot contents). */
+    public String getSwitchAir() {
+        String[] a = getPreference("switch_air");
+        return a.length > 0 ? a[0] : "keep";
+    }
+    public void setSwitchAir(String mode) { setPreference("switch_air", new String[]{mode}); }
+
+    /** Trigger mode: "auto" = swap on every crosshair change; "button" = only on keybind press. */
+    public String getSwitchTrigger() {
+        String[] a = getPreference("switch_trigger");
+        return a.length > 0 ? a[0] : "auto";
+    }
+    public void setSwitchTrigger(String mode) { setPreference("switch_trigger", new String[]{mode}); }
+    public boolean isSwitchTriggerAuto() { return "auto".equals(getSwitchTrigger()); }
+
+    /** Seed the five fixed switch tool groups (Pickaxes/Axes/Shovels/Hoes/Swords) from their vanilla tags
+     *  ONCE, so they are full, normal custom groups (usable as cg: slot rules everywhere) that the player can
+     *  extend with modded tools. Needs tags loaded (call in-world); no-op if already seeded. */
+    public void materializeSwitchGroupsOnce() {
+        String[] v = getPreference("switch_groups_v");
+        if (v.length > 0 && "1".equals(v[0])) return;
+        int total = seedSwitchGroup("Pickaxes", net.minecraft.tags.ItemTags.PICKAXES)
+                + seedSwitchGroup("Axes", net.minecraft.tags.ItemTags.AXES)
+                + seedSwitchGroup("Shovels", net.minecraft.tags.ItemTags.SHOVELS)
+                + seedSwitchGroup("Hoes", net.minecraft.tags.ItemTags.HOES)
+                + seedSwitchGroup("Swords", net.minecraft.tags.ItemTags.SWORDS);
+        if (total > 0) setPreference("switch_groups_v", new String[]{"1"}); // else retry later (tags not ready)
+    }
+
+    private int seedSwitchGroup(String name, net.minecraft.tags.TagKey<net.minecraft.world.item.Item> tag) {
+        if (!getCustomGroup(name).isEmpty()) return 1; // already has content — leave the player's edits alone
+        java.util.List<String> ids = new ArrayList<>();
+        try {
+            for (net.minecraft.world.item.Item it : net.minecraft.core.registries.BuiltInRegistries.ITEM) {
+                if (new net.minecraft.world.item.ItemStack(it).is(tag)) {
+                    ids.add(net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(it).toString());
+                }
+            }
+        } catch (Throwable ignored) {}
+        if (!ids.isEmpty()) setCustomGroup(name, ids);
+        return ids.size();
+    }
+
+
+    // ===== Free-mode server whitelist =====
+    // The master quick-switch on the slot config screen is just a preset that flips the
+    // existing keybind-mode + death-autosort toggles; it has no preference of its own.
+    // Free behaviour is additionally gated by ServerEnvironment (private environments +
+    // this whitelist).
+
+    /**
+     * Whether the whitelist feature is unlocked in Special Settings. Hidden by default; the user
+     * must explicitly enable it after acknowledging the "use at your own risk" warning. Stored under
+     * preferences key "whitelist_enabled" ("true"/"false").
+     */
+    public boolean isWhitelistEnabled() {
+        String[] arr = getPreference("whitelist_enabled");
+        return arr.length > 0 && "true".equals(arr[0]);
+    }
+
+    public void setWhitelistEnabled(boolean enabled) {
+        setPreference("whitelist_enabled", new String[]{enabled ? "true" : "false"});
+    }
+
+    // ===== Trash / void list =====
+    // Items matching any of these rules ("g:..", "t:..", "pot:..", or a full item id) are auto-dropped
+    // in free mode the moment they enter your inventory. Edited via the "Trash" tab (a 54-slot grid).
+
+    public List<String> getTrashRules() {
+        return new ArrayList<>(java.util.Arrays.asList(getPreference("trash_rules")));
+    }
+
+    /** When true, trash keeps up to one stack of each trashed item and only drops the excess. */
+    public boolean isTrashOverflowOnly() {
+        String[] arr = getPreference("trash_overflow_only");
+        return arr.length > 0 && "true".equals(arr[0]);
+    }
+
+    public void setTrashOverflowOnly(boolean v) {
+        setPreference("trash_overflow_only", new String[]{v ? "true" : "false"});
+    }
+
+    public void setTrashRules(List<String> rules) {
+        List<String> clean = new ArrayList<>();
+        if (rules != null) {
+            for (String r : rules) {
+                if (r != null && !r.isEmpty() && !r.equals("any") && !r.equals("empty")) clean.add(r);
+            }
+        }
+        setPreference("trash_rules", clean.toArray(new String[0]));
+    }
+
+    public List<String> getServerWhitelist() {
+        return new ArrayList<>(java.util.Arrays.asList(getPreference("server_whitelist")));
+    }
+
+    public void addServerWhitelist(String host) {
+        if (host == null || host.isEmpty()) return;
+        List<String> list = getServerWhitelist();
+        if (!list.contains(host)) {
+            list.add(host);
+            setPreference("server_whitelist", list.toArray(new String[0]));
+        }
+    }
+
+    public void removeServerWhitelist(String host) {
+        List<String> list = getServerWhitelist();
+        if (list.remove(host)) {
+            setPreference("server_whitelist", list.toArray(new String[0]));
+        }
+    }
+
+    // ===== Built-in group customization =====
+    // Built-in groups (weapons, tools, blocks, ...) are normally defined by heuristics in
+    // InventorySorter. The user can override a built-in group's membership with an explicit
+    // item list. We track which groups have been overridden in "builtin_overridden" so an
+    // empty override list (user removed everything) is still respected instead of falling
+    // back to the heuristic.
+
+    public boolean hasBuiltinOverride(String groupName) {
+        for (String s : getPreference("builtin_overridden")) {
+            if (s.equals(groupName)) return true;
+        }
+        return false;
+    }
+
+    /** Returns the explicit item-ID list for a built-in group, or null if it uses the default heuristic. */
+    public List<String> getBuiltinGroupItems(String groupName) {
+        if (!hasBuiltinOverride(groupName)) return null;
+        return new ArrayList<>(java.util.Arrays.asList(getPreference("builtin_group_" + groupName)));
+    }
+
+    public void setBuiltinGroupItems(String groupName, List<String> items) {
+        setPreference("builtin_group_" + groupName, items.toArray(new String[0]));
+        List<String> ov = new ArrayList<>(java.util.Arrays.asList(getPreference("builtin_overridden")));
+        if (!ov.contains(groupName)) {
+            ov.add(groupName);
+            setPreference("builtin_overridden", ov.toArray(new String[0]));
+        }
+    }
+
+    /** Remove the override so the built-in group reverts to its default heuristic membership. */
+    public void resetBuiltinGroup(String groupName) {
+        getPreferences().remove("builtin_group_" + groupName);
+        List<String> ov = new ArrayList<>(java.util.Arrays.asList(getPreference("builtin_overridden")));
+        ov.remove(groupName);
+        setPreference("builtin_overridden", ov.toArray(new String[0]));
+    }
+
+    public boolean isBuiltinHidden(String groupName) {
+        for (String s : getPreference("builtin_hidden")) {
+            if (s.equals(groupName)) return true;
+        }
+        return false;
+    }
+
+    public void setBuiltinHidden(String groupName, boolean hidden) {
+        List<String> list = new ArrayList<>(java.util.Arrays.asList(getPreference("builtin_hidden")));
+        list.remove(groupName);
+        if (hidden) list.add(groupName);
+        setPreference("builtin_hidden", list.toArray(new String[0]));
+    }
 
     public Map<String, List<String>> getCustomGroups() {
         if (customGroups == null) customGroups = new HashMap<>();
@@ -187,20 +668,430 @@ public class OrganizerConfig {
         return names;
     }
 
+    /**
+     * One-time migration: turn the former built-in groups (weapons, tools, blocks, …) into REAL
+     * custom groups, generated from the heuristic membership. After this they behave exactly like a
+     * hand-made group everywhere — editable membership, draggable order in the ranks screen, and the
+     * sorter resolves {@code g:NAME} rules through this list. Guarded by a flag so it never clobbers
+     * user edits (a deleted built-in group stays deleted). Must run with the item registry available
+     * (called from client init), since {@link com.example.inventoryorganizer.InventorySorter#getDefaultItemsForGroup}
+     * scans the registry.
+     */
+    public void materializeBuiltinGroupsOnce() {
+        // Versioned so a heuristic fix can refresh the generated built-in groups exactly once.
+        // v1: initial materialization. v2: regenerate after the explicit item fix (dragon's breath,
+        // blaze rod, … out of blocks). v3 was a BlockItem-guard experiment that broke the blocks group,
+        // now reverted. v4: regenerate once more with the reverted, working heuristic so anyone who got
+        // the broken v3 lists is repaired. v5: the "blocks" group now contains EVERY placeable block
+        // (Block.byItem). v6: food/tools/weapons/armor/arrows now generated from the game's own data
+        // (food component + item tags) for full coverage. v7: logs + boats also from item tags.
+        // v8: group-content overhaul per user spec — blocks = full solid blocks only (collision shape),
+        // tools = broad usable items, weapons += axes, nether/end now include their mob-drop/loot items.
+        // v9: regenerate once tags are actually loaded — v8 ran at client init before tag binding, so the
+        // tag-based groups (arrows/logs/boats/tools/weapons/armor) were stored EMPTY/under-populated.
+        // v10: 26.1's item tags proved unreliable even in-world (arrows/logs/boats/armor/mining-tools came
+        // out EMPTY while swords/axes worked), so getDefaultItemsForGroup now has an item-id fallback for
+        // every tag-based group. Generation no longer depends on tags, so we drop the tags-loaded guard and
+        // regenerate unconditionally to repair everyone stuck with empty groups at v9.
+        // v11: "food" group was empty — the FOOD data component is unreliable in 26.1 (1.21.2 consumable
+        // refactor). getDefaultItemsForGroup now also matches an explicit vanilla food-id list (FOOD_IDS).
+        final int CURRENT = 11;
+        String[] done = getPreference("builtin_groups_materialized");
+        int have = 0;
+        if (done.length > 0) {
+            if ("true".equals(done[0])) have = 1;
+            else try { have = Integer.parseInt(done[0]); } catch (NumberFormatException ignored) {}
+        }
+        if (have >= CURRENT) return;
+        for (String name : com.example.inventoryorganizer.InventorySorter.BUILTIN_GROUP_NAMES) {
+            // have < 2: refresh the built-in groups to the corrected membership (overwrites the prior
+            // auto-generated list; hand-made custom groups are never touched). have == 0: also creates.
+            setCustomGroup(name, com.example.inventoryorganizer.InventorySorter.getDefaultItemsForGroup(name));
+            // Drop the stale rank order so it rebuilds cleanly from the corrected membership — otherwise
+            // a previously-saved cg_order_ could still list an item the fix just removed (e.g. dragon's
+            // breath in blocks) and the sorter, which honours cg_order, would re-place it there.
+            preferences.remove("cg_order_" + name);
+        }
+        setPreference("builtin_groups_materialized", new String[]{String.valueOf(CURRENT)});
+        save();
+    }
+
+    /**
+     * One-time migration of the research-backed sort defaults so EXISTING users (not just fresh
+     * installs) get them. Guarded by version flag "sort_defaults_v".
+     *   v1: enchant priority list retuned (Mending/Unbreaking first, curses last) and copper
+     *       inserted into any saved material order that predates the copper fix.
+     *   v2: fire_protection demoted to the weakest protective enchant (just above the curses).
+     * The enchant order is overwritten wholesale (user-approved) because the runtime otherwise
+     * falls back to raw enchant-count when "sort_enchant_order" is unset, so writing it here is
+     * also what makes the curated priority actually take effect for people who never opened the
+     * ranks screen. Safe to call at client init (no registry dependency).
+     */
+    public void applySortDefaultsOnce() {
+        final int CURRENT = 2;
+        String[] done = getPreference("sort_defaults_v");
+        int have = 0;
+        if (done.length > 0) {
+            try { have = Integer.parseInt(done[0]); } catch (NumberFormatException ignored) {}
+        }
+        if (have >= CURRENT) return;
+
+        // Enchant priority: adopt the curated order for everyone.
+        setPreference("sort_enchant_order",
+                com.example.inventoryorganizer.config.SortingOrderConfigScreen.DEFAULT_ENCHANTS.clone());
+
+        // Material order: if the user has a saved order that lacks copper (pre-fix), splice it in
+        // right after iron so their existing customization is preserved but copper stops sorting last.
+        String[] mat = getPreference("sort_material_order");
+        if (mat != null && mat.length > 0) {
+            boolean hasCopper = false;
+            for (String m : mat) { if ("copper".equals(m)) { hasCopper = true; break; } }
+            if (!hasCopper) {
+                List<String> list = new ArrayList<>(java.util.Arrays.asList(mat));
+                int ironIdx = list.indexOf("iron");
+                if (ironIdx >= 0) list.add(ironIdx + 1, "copper");
+                else list.add("copper");
+                setPreference("sort_material_order", list.toArray(new String[0]));
+            }
+        }
+
+        setPreference("sort_defaults_v", new String[]{String.valueOf(CURRENT)});
+        save();
+    }
+
+    /** The two protected default profiles, in fixed order/id. */
+    private static final String[] DEFAULT_NAMES = {"Container", "Large Chest"};
+    private static final int[]    DEFAULT_SIZES = {27, 54};
+    public static final int DEFAULT_COUNT = 2;
+
     public List<StoragePreset> getStoragePresets() {
+        normalizeProfiles();
+        return storagePresets;
+    }
+
+    /**
+     * Ensures the list is well-formed: the protected defaults sit at the front with stable ids
+     * 0..DEFAULT_COUNT-1 and canonical names, and every per-chest profile after them is non-default
+     * with a unique id ≥ DEFAULT_COUNT. Idempotent and cheap so it can run from getStoragePresets()
+     * each frame.
+     */
+    private void normalizeProfiles() {
         if (storagePresets == null) storagePresets = new ArrayList<>();
-        // Migration: rename old "Chest 1" → "Container", remove "Custom"
+        // Legacy migration: old "Chest 1" → "Container", drop the removed "Custom" preset, and drop
+        // the removed default "Bundle" preset (id 2) from configs saved before it was removed — it
+        // never actually filled bundles (superseded by BundleProfile rules) and its id gap is fine,
+        // per-chest profile ids were already ≥ 3 and don't need to be contiguous.
         storagePresets.removeIf(p -> "Custom".equals(p.getName()));
+        storagePresets.removeIf(p -> p.isDefault() && "Bundle".equalsIgnoreCase(p.getName()));
         for (StoragePreset p : storagePresets) {
             if ("Chest 1".equals(p.getName())) p.setName("Container");
         }
-        String[] defaultNames = {"Container", "Large Chest", "Bundle"};
-        int[] defaultSizes  = {27, 54, 27};
-        while (storagePresets.size() < defaultNames.length) {
+        // Guarantee the three defaults exist at the front.
+        while (storagePresets.size() < DEFAULT_COUNT) {
             int i = storagePresets.size();
-            storagePresets.add(new StoragePreset(defaultNames[i], defaultSizes[i]));
+            storagePresets.add(new StoragePreset(DEFAULT_NAMES[i], DEFAULT_SIZES[i]));
         }
-        return storagePresets;
+        // Force the defaults' identity (protected, canonical name, fixed id, never bound).
+        for (int i = 0; i < DEFAULT_COUNT; i++) {
+            StoragePreset p = storagePresets.get(i);
+            p.setId(i);
+            p.setDefault(true);
+            p.setName(DEFAULT_NAMES[i]);
+            p.setCustomName(null);
+            p.setSignText(null);
+            p.clearPositions();
+        }
+        // Per-chest profiles: non-default, unique ids ≥ 3.
+        java.util.Set<Integer> used = new java.util.HashSet<>(java.util.Arrays.asList(0, 1, 2));
+        int next = DEFAULT_COUNT;
+        for (int i = DEFAULT_COUNT; i < storagePresets.size(); i++) {
+            StoragePreset p = storagePresets.get(i);
+            p.setDefault(false);
+            int id = p.getId();
+            if (id < DEFAULT_COUNT || used.contains(id)) {
+                while (used.contains(next)) next++;
+                id = next;
+                p.setId(id);
+            }
+            used.add(id);
+        }
+    }
+
+    /** Smallest free profile id ≥ 3. */
+    public int getNextProfileId() {
+        int max = DEFAULT_COUNT - 1;
+        for (StoragePreset p : getStoragePresets()) max = Math.max(max, p.getId());
+        return max + 1;
+    }
+
+    /** Create a new (unbound) per-chest profile and append it. */
+    public StoragePreset addProfile(String name, int size) {
+        StoragePreset p = new StoragePreset(name, size);
+        p.setDefault(false);
+        p.setId(getNextProfileId());
+        getStoragePresets().add(p);
+        return p;
+    }
+
+    /** Duplicate any profile into a fresh, unbound per-chest profile (tier data is copied too). */
+    public StoragePreset duplicateProfile(StoragePreset src) {
+        StoragePreset c = src.copy();
+        c.setName(src.getName() + " (copy)");
+        c.setId(getNextProfileId());
+        getStoragePresets().add(c);
+        // Tier assignments live in preferences keyed by id — copy them to the new id.
+        String[] srcTiers = getPreference("tier_order_storage_" + src.getId());
+        if (srcTiers.length > 0) setPreference("tier_order_storage_" + c.getId(), srcTiers.clone());
+        return c;
+    }
+
+    /** Remove a per-chest profile (defaults are protected and ignored) and drop its tier data. */
+    public void removeProfile(StoragePreset p) {
+        if (p == null || p.isDefault()) return;
+        getStoragePresets().remove(p);
+        getPreferences().remove("tier_order_storage_" + p.getId());
+        // The chest(s) this profile was bound to lose their profile → drop them from the warehouse
+        // map (and any link), so a chest "that had a profile but no longer does" disappears. They
+        // come back if the player opens them again (re-learned as a known chest).
+        List<int[]> pos = p.getPositions();
+        if (pos != null) {
+            for (int[] q : pos) {
+                if (q.length == 3) {
+                    removeMatchingPos(getKnownChests(), getKnownChestWorlds(), q[0], q[1], q[2]);
+                    detachFromGroups(q[0], q[1], q[2]);
+                }
+            }
+        }
+    }
+
+    /** Index of a profile in the live list, or -1. */
+    public int indexOfProfile(StoragePreset p) {
+        return getStoragePresets().indexOf(p);
+    }
+
+    /** Look up a profile by stable id, or null. */
+    public StoragePreset getProfileById(int id) {
+        for (StoragePreset p : getStoragePresets()) {
+            if (p.getId() == id) return p;
+        }
+        return null;
+    }
+
+    /**
+     * Resolve the per-chest profile bound to an opened chest, or null if none.
+     * Priority: (1) anvil custom name (survives relocation), (2) coordinates within ±1 block.
+     * Only bound, non-default profiles are considered.
+     */
+    public StoragePreset findProfileFor(String chestCustomName, List<int[]> positions, String signText) {
+        return findProfileFor(chestCustomName, positions, signText, null);
+    }
+
+    public StoragePreset findProfileFor(String chestCustomName, List<int[]> positions, String signText, String shulkerId) {
+        // (0) mod-assigned shulker UUID — highest priority, unambiguous portable identity
+        if (shulkerId != null && !shulkerId.isEmpty()) {
+            for (StoragePreset p : getStoragePresets()) {
+                if (!p.isDefault() && p.matchesShulkerId(shulkerId)) return p;
+            }
+        }
+        // (1) anvil custom name
+        if (chestCustomName != null && !chestCustomName.isEmpty()) {
+            for (StoragePreset p : getStoragePresets()) {
+                if (!p.isDefault() && p.matchesName(chestCustomName)) return p;
+            }
+        }
+        // (2) EXACT coordinate match against any of the chest's current position(s). Both halves of a
+        // double chest are passed in, so doubles still match without a ±1 tolerance — which would
+        // otherwise wrongly match an *adjacent* unrelated chest (neighbours are 1 block apart).
+        if (positions != null) {
+            for (StoragePreset p : getStoragePresets()) {
+                if (p.isDefault()) continue;
+                for (int[] pos : positions) {
+                    if (pos.length == 3 && p.matchesPosition(pos[0], pos[1], pos[2], 0)) return p;
+                }
+            }
+        }
+        // (3) adjacent-sign text (lets a relocated chest re-attach if its sign moves with it)
+        if (signText != null && !signText.isEmpty()) {
+            for (StoragePreset p : getStoragePresets()) {
+                if (!p.isDefault() && p.matchesSign(signText)) return p;
+            }
+        }
+        return null;
+    }
+
+    /** The size-based default profile (Container 27 / Large Chest 54) for an unbound chest, or null. */
+    public StoragePreset getDefaultForSize(int containerSize) {
+        for (StoragePreset p : getStoragePresets()) {
+            if (p.isDefault() && p.getSize() == containerSize) {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    // ===== Bundle profiles =====
+
+    public List<BundleProfile> getBundleProfiles() {
+        if (bundleProfiles == null) bundleProfiles = new ArrayList<>();
+        return bundleProfiles;
+    }
+
+    public void addBundleProfile(String name) {
+        getBundleProfiles().add(new BundleProfile(name));
+    }
+
+    public void removeBundleProfile(int index) {
+        List<BundleProfile> list = getBundleProfiles();
+        if (index >= 0 && index < list.size()) list.remove(index);
+    }
+
+    // ===== Warehouse chest links =====
+
+    public List<WarehouseGroup> getWarehouseGroups() {
+        if (warehouseGroups == null) warehouseGroups = new ArrayList<>();
+        // drop any degenerate group (fewer than 2 chests)
+        warehouseGroups.removeIf(g -> g.getPositions().size() < 2);
+        return warehouseGroups;
+    }
+
+    /** Create a link from a set of chest positions. A chest can only be in one group, so any of these
+     *  positions are first detached from existing groups. Needs at least 2 chests. */
+    public void addWarehouseGroup(List<int[]> positions) {
+        if (positions == null || positions.size() < 2) return;
+        for (int[] p : positions) detachFromGroups(p[0], p[1], p[2]);
+        WarehouseGroup g = new WarehouseGroup();
+        for (int[] p : positions) g.add(p[0], p[1], p[2]);
+        getWarehouseGroups().add(g);
+    }
+
+    /** The group a chest belongs to, or null. */
+    public WarehouseGroup findWarehouseGroupFor(int x, int y, int z) {
+        for (WarehouseGroup g : getWarehouseGroups()) {
+            if (g.contains(x, y, z)) return g;
+        }
+        return null;
+    }
+
+    /** Remove a chest from whatever group it's in (and drop the group if it becomes too small). */
+    public void detachFromGroups(int x, int y, int z) {
+        for (WarehouseGroup g : getWarehouseGroups()) g.remove(x, y, z);
+        getWarehouseGroups().removeIf(g -> g.getPositions().size() < 2);
+    }
+
+    // ===== Warehouse map visibility (known / "Nothing" chests) =====
+
+    public List<int[]> getKnownChests() {
+        if (knownChests == null) knownChests = new ArrayList<>();
+        return knownChests;
+    }
+
+    public List<int[]> getNothingChests() {
+        if (nothingChests == null) nothingChests = new ArrayList<>();
+        return nothingChests;
+    }
+
+    public List<String> getKnownChestWorlds() {
+        if (knownChestWorlds == null) knownChestWorlds = new ArrayList<>();
+        return knownChestWorlds;
+    }
+
+    public List<String> getNothingChestWorlds() {
+        if (nothingChestWorlds == null) nothingChestWorlds = new ArrayList<>();
+        return nothingChestWorlds;
+    }
+
+    public List<String> getGenericChestWorlds() {
+        if (genericChestWorlds == null) genericChestWorlds = new ArrayList<>();
+        return genericChestWorlds;
+    }
+
+    /** The world/dimension key at index {@code i}, or null if that entry predates world-scoping
+     *  (the parallel list is shorter than the position list) — treated as a WILDCARD (any world). */
+    private static String worldTagAt(List<String> worlds, int i) {
+        return (worlds != null && i < worlds.size() && worlds.get(i) != null && !worlds.get(i).isEmpty())
+                ? worlds.get(i) : null;
+    }
+
+    /** The current world/server + dimension key, or null if it can't be determined (e.g. no world
+     *  loaded yet) — callers treat null the same as "don't filter by world" for safety. */
+    private static String currentWorldKey() {
+        try {
+            return com.example.inventoryorganizer.WorldScope.key(net.minecraft.client.Minecraft.getInstance().level);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** True if {@code x,y,z} is in {@code list}, matching the CURRENT world unless the entry is a
+     *  legacy (pre-world-scoping) wildcard, or the current world can't be determined. */
+    private static boolean posListContains(List<int[]> list, List<String> worlds, int x, int y, int z) {
+        String current = currentWorldKey();
+        for (int i = 0; i < list.size(); i++) {
+            int[] p = list.get(i);
+            if (p.length != 3 || p[0] != x || p[1] != y || p[2] != z) continue;
+            String tag = worldTagAt(worlds, i);
+            if (tag == null || current == null || tag.equals(current)) return true;
+        }
+        return false;
+    }
+
+    /** Remove every entry at {@code x,y,z} from {@code list} (any world) — keeps the parallel world-tag
+     *  list in sync by index. Matches ALL worlds (not just the current one) since "Nothing"-ing or
+     *  reclassifying a position is a deliberate per-coordinate action, same scope as before this
+     *  feature existed. */
+    private static void removeMatchingPos(List<int[]> list, List<String> worlds, int x, int y, int z) {
+        for (int i = list.size() - 1; i >= 0; i--) {
+            int[] p = list.get(i);
+            if (p.length == 3 && p[0] == x && p[1] == y && p[2] == z) {
+                list.remove(i);
+                if (worlds != null && i < worlds.size()) worlds.remove(i);
+            }
+        }
+    }
+
+    public boolean isNothingChest(int x, int y, int z) {
+        return posListContains(getNothingChests(), getNothingChestWorlds(), x, y, z);
+    }
+
+    /** Record a chest the player has opened (shown on the map). Returns true if newly added. */
+    public boolean addKnownChest(int x, int y, int z) {
+        if (isNothingChest(x, y, z) || posListContains(getKnownChests(), getKnownChestWorlds(), x, y, z)) return false;
+        getKnownChests().add(new int[]{x, y, z});
+        String w = currentWorldKey();
+        getKnownChestWorlds().add(w != null ? w : "");
+        return true;
+    }
+
+    /** Mark a chest as "Nothing": hide it from the map, forget it as known, and unlink it. */
+    public void markNothingChest(int x, int y, int z) {
+        if (!isNothingChest(x, y, z)) {
+            getNothingChests().add(new int[]{x, y, z});
+            String w = currentWorldKey();
+            getNothingChestWorlds().add(w != null ? w : "");
+        }
+        removeMatchingPos(getKnownChests(), getKnownChestWorlds(), x, y, z);
+        removeMatchingPos(getGenericChests(), getGenericChestWorlds(), x, y, z);
+        detachFromGroups(x, y, z);
+    }
+
+    // ===== Generic (unidentified / modded) containers =====
+
+    public List<int[]> getGenericChests() {
+        if (genericChests == null) genericChests = new ArrayList<>();
+        return genericChests;
+    }
+
+    public boolean isGenericChest(int x, int y, int z) {
+        return posListContains(getGenericChests(), getGenericChestWorlds(), x, y, z);
+    }
+
+    /** Mark a chest position as a generic (unidentified) container. Returns true if newly added. */
+    public boolean addGenericChest(int x, int y, int z) {
+        if (isGenericChest(x, y, z)) return false;
+        getGenericChests().add(new int[]{x, y, z});
+        String w = currentWorldKey();
+        getGenericChestWorlds().add(w != null ? w : "");
+        return true;
     }
 
     public List<Kit> getKits() {
@@ -208,22 +1099,23 @@ public class OrganizerConfig {
         return kits;
     }
 
-    public void saveCurrentAsKit(String name) {
-        Kit kit = new Kit(name, slotRules, preferences);
+    public void saveCurrentAsKit(String name, boolean auto) {
+        Map<String, SlotRule> src = auto ? autoSlotRules : slotRules;
+        Kit kit = new Kit(name, src, preferences);
         if (kits == null) kits = new ArrayList<>();
         kits.add(kit);
     }
 
-    public void loadKit(Kit kit) {
-        // Overwrite current slot rules with kit's saved rules
-        slotRules.clear();
+    public void loadKit(Kit kit, boolean auto) {
+        Map<String, SlotRule> dst = auto ? autoSlotRules : slotRules;
+        dst.clear();
         for (Map.Entry<String, SlotRule> entry : kit.getSlotRules().entrySet()) {
-            slotRules.put(entry.getKey(), entry.getValue().copy());
+            dst.put(entry.getKey(), entry.getValue().copy());
         }
         // Ensure all 36 slots exist
         for (int i = 0; i < 36; i++) {
-            if (!slotRules.containsKey(String.valueOf(i))) {
-                slotRules.put(String.valueOf(i), new SlotRule());
+            if (!dst.containsKey(String.valueOf(i))) {
+                dst.put(String.valueOf(i), new SlotRule());
             }
         }
         // Overwrite preferences
@@ -233,10 +1125,11 @@ public class OrganizerConfig {
         }
     }
 
-    public void saveToKit(int index) {
+    public void saveToKit(int index, boolean auto) {
         if (kits != null && index >= 0 && index < kits.size()) {
             String name = kits.get(index).getName();
-            kits.set(index, new Kit(name, slotRules, preferences));
+            Map<String, SlotRule> src = auto ? autoSlotRules : slotRules;
+            kits.set(index, new Kit(name, src, preferences));
         }
     }
 
@@ -274,15 +1167,14 @@ public class OrganizerConfig {
                             config.slotRules.put(key, new SlotRule());
                         }
                     }
-                    // Ensure 3 storage presets exist
-                    if (config.storagePresets == null || config.storagePresets.isEmpty()) {
-                        config.storagePresets = new ArrayList<>();
-                        config.storagePresets.add(new StoragePreset("Chest 1", 27));
-                        config.storagePresets.add(new StoragePreset("Large Chest", 54));
-                        config.storagePresets.add(new StoragePreset("Custom", 27));
-                    }
-                    while (config.storagePresets.size() < 3) {
-                        config.storagePresets.add(new StoragePreset("Preset " + (config.storagePresets.size() + 1), 27));
+                    // Ensure defaults exist + per-chest profiles have stable ids
+                    config.normalizeProfiles();
+                    // One-time migration: if Auto rules are empty, seed them from Plain so existing users
+                    // don't lose their non-tool slot setup when the mirroring is removed.
+                    if (config.autoSlotRules == null) config.autoSlotRules = new HashMap<>();
+                    if (config.autoSlotRules.isEmpty() && !config.slotRules.isEmpty()) {
+                        for (Map.Entry<String, SlotRule> e : config.slotRules.entrySet())
+                            config.autoSlotRules.put(e.getKey(), e.getValue().copy());
                     }
                     return config;
                 }
@@ -297,5 +1189,82 @@ public class OrganizerConfig {
 
     public static void reload() {
         INSTANCE = load();
+    }
+
+    // ===== Whole-config backup (single file holding EVERYTHING: groups+contents, profiles, slot rules,
+    // kits, HUD, prefs). Lives in the kits folder so users can carry it between instances. =====
+
+    /** The single backup file path (in the kits folder). */
+    public static java.nio.file.Path backupFile() throws java.io.IOException {
+        return KitFile.getKitsFolder().resolve("inventory-organizer-backup.txt");
+    }
+
+    /** Write the entire current config to the backup file. Returns true on success. */
+    public static boolean exportBackup() {
+        try {
+            get().save(); // flush live state to the config file first
+            java.nio.file.Files.copy(CONFIG_FILE.toPath(), backupFile(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            return true;
+        } catch (Exception e) {
+            LOGGER.error("Failed to export config backup", e);
+            return false;
+        }
+    }
+
+    /** Restore the entire config from the backup file (full replace). Returns true on success. */
+    public static boolean importBackup() {
+        try {
+            java.nio.file.Path f = backupFile();
+            if (!java.nio.file.Files.exists(f)) return false;
+            OrganizerConfig parsed;
+            try (java.io.Reader r = java.nio.file.Files.newBufferedReader(f)) {
+                parsed = GSON.fromJson(r, OrganizerConfig.class);
+            }
+            if (parsed == null) return false;
+            // Copy fields INTO the existing singleton so screens holding a config reference stay valid.
+            get().copyFrom(parsed);
+            get().save();
+            return true;
+        } catch (Exception e) {
+            LOGGER.error("Failed to import config backup", e);
+            return false;
+        }
+    }
+
+    /** Make sure all 36 inventory slots + equipment slots exist and profiles are normalized. */
+    private void ensureSlotsAndProfiles() {
+        for (int i = 0; i < 36; i++) {
+            if (!slotRules.containsKey(String.valueOf(i))) slotRules.put(String.valueOf(i), new SlotRule());
+        }
+        for (String key : EQUIPMENT_SLOTS) {
+            if (!slotRules.containsKey(key)) slotRules.put(key, new SlotRule());
+        }
+        normalizeProfiles();
+    }
+
+    /** Copy every persisted field from {@code o} into this instance (keeps INSTANCE identity). */
+    void copyFrom(OrganizerConfig o) {
+        if (o.slotRules != null) this.slotRules = o.slotRules;
+        if (o.autoSlotRules != null) this.autoSlotRules = o.autoSlotRules;
+        if (o.preferences != null) this.preferences = o.preferences;
+        if (o.kits != null) this.kits = o.kits;
+        this.showHelp = o.showHelp;
+        if (o.customGroups != null) this.customGroups = o.customGroups;
+        if (o.storagePresets != null) this.storagePresets = o.storagePresets;
+        if (o.warehouseGroups != null) this.warehouseGroups = o.warehouseGroups;
+        if (o.knownChests != null) this.knownChests = o.knownChests;
+        if (o.nothingChests != null) this.nothingChests = o.nothingChests;
+        if (o.genericChests != null) this.genericChests = o.genericChests;
+        if (o.knownChestWorlds != null) this.knownChestWorlds = o.knownChestWorlds;
+        if (o.nothingChestWorlds != null) this.nothingChestWorlds = o.nothingChestWorlds;
+        if (o.genericChestWorlds != null) this.genericChestWorlds = o.genericChestWorlds;
+        if (o.hud != null) this.hud = o.hud;
+        if (o.remoteCraftHud != null) this.remoteCraftHud = o.remoteCraftHud;
+        this.craftPreferChests = o.craftPreferChests;
+        this.autoRefillEnabled = o.autoRefillEnabled;
+        this.scrollMoveEnabled = o.scrollMoveEnabled;
+        if (o.bundleProfiles != null) this.bundleProfiles = o.bundleProfiles;
+        ensureSlotsAndProfiles();
     }
 }

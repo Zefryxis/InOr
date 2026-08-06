@@ -3,10 +3,10 @@ package com.example.inventoryorganizer.config;
 import me.shedaniel.clothconfig2.api.ConfigBuilder;
 import me.shedaniel.clothconfig2.api.ConfigCategory;
 import me.shedaniel.clothconfig2.api.ConfigEntryBuilder;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.registry.Registries;
-import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -23,7 +23,7 @@ public class ConfigScreenBuilder {
         idToNameMap = new LinkedHashMap<>();
 
         try {
-            for (Identifier id : Registries.ITEM.getIds()) {
+            for (Identifier id : BuiltInRegistries.ITEM.keySet()) {
                 String itemId = id.toString();
                 String englishName = formatIdAsName(id.getPath());
                 nameToIdMap.put(englishName, itemId);
@@ -48,17 +48,17 @@ public class ConfigScreenBuilder {
     public static Screen build(Screen parent) {
         ConfigBuilder builder = ConfigBuilder.create()
                 .setParentScreen(parent)
-                .setTitle(Text.literal("Item Names Reference"));
+                .setTitle(Component.translatable("inventory-organizer.item_names.screen_title"));
 
         ConfigEntryBuilder entryBuilder = builder.entryBuilder();
 
         // === Item Names (reference list) ===
-        ConfigCategory namesCategory = builder.getOrCreateCategory(Text.literal("Item Names"));
+        ConfigCategory namesCategory = builder.getOrCreateCategory(Component.translatable("inventory-organizer.item_names.category"));
 
         buildItemMaps();
 
         namesCategory.addEntry(entryBuilder.startTextDescription(
-                Text.literal("Total items: " + nameToIdMap.size() + "\nItems sorted A-Z. Click a letter group to expand it.")
+                Component.translatable("inventory-organizer.item_names.total_items", nameToIdMap.size())
         ).build());
 
         // Sort items alphabetically and group by first letter
@@ -75,11 +75,11 @@ public class ConfigScreenBuilder {
             char letter = letterGroup.getKey();
             java.util.List<Map.Entry<String, String>> items = letterGroup.getValue();
             me.shedaniel.clothconfig2.impl.builders.SubCategoryBuilder sub =
-                    entryBuilder.startSubCategory(Text.literal("\u00A7b\u00A7l" + letter + "\u00A7r (" + items.size() + " items)"));
+                    entryBuilder.startSubCategory(Component.literal("\u00A7b\u00A7l" + letter + "\u00A7r (" + items.size() + " items)"));
             sub.setExpanded(false);
             for (Map.Entry<String, String> item : items) {
                 sub.add(entryBuilder.startTextDescription(
-                        Text.literal("\u00A7e" + item.getKey() + "\u00A7r = \u00A77" + item.getValue())
+                        Component.literal("\u00A7e" + item.getKey() + "\u00A7r = \u00A77" + item.getValue())
                 ).build());
             }
             namesCategory.addEntry(sub.build());

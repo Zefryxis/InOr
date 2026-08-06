@@ -1,0 +1,265 @@
+INVENTORY ORGANIZER (InOr) — ÁTADÁSI JEGYZET (dedikált chat-hez)
+================================================
+Dátum: 2026-07-07
+Cél: ezt a fájlt olvassa be egy ÚJ, InOr-ra dedikált chat, hogy a projekt
+kontextusát és tapasztalatait ne kelljen újra felfedezni. A FORRÁSKÓDOT
+NEM ez a fájl adja át — azt közvetlenül a projekt mappákból fogjátok
+megosztani/megnyitni.
+
+PROJEKT ALAPADATOK ÉS ELRENDEZÉS
+-------------------
+- Fabric Minecraft mod, multi-version port projekt (Java, Fabric API).
+- FONTOS, BIZONYTALAN PONT (ezt TISZTÁZD a userrel mielőtt kódot írsz):
+  LEGALÁBB KÉT különálló repo-másolat létezik a gépen, és nem tudom
+  biztosan, mi a pontos szinkron/munkafolyamat köztük. Kérdezd meg a
+  usert, hogy egy adott feladatnál melyikben kell dolgozni, és hogy a
+  változtatást át kell-e vezetni a másikba is.
+    1) C:\Users\mihal\Documents\InventoryOrganizerMod
+       — a jelenlegi/root repo, van benne ports\1.21.11 almappa is,
+       kevesebb Java fájl (nincs warehouse/crafting/hud csomag) —
+       ez valószínűleg egy RÉGEBBI vagy EGYSZERŰBB, esetleg egy adott
+       (talán 1.21.11-es) verzióhoz tartozó állapotot tükröz.
+    2) C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2
+       — a 26.2-es (Mojang mappings, Java 25) port, ez a "teljesebb",
+       aktívabban fejlesztett másolat (warehouse, crafting, hud
+       csomagokkal) — a CaveMap projekt render-konvencióit (build.
+       gradle, keybind minták, Screen/GuiGraphicsExtractor minták)
+       ERRŐL a másolatról "kölcsönöztük".
+  Lehet, hogy van MÉG TÖBB port-mappa is (pl. 1.20.1/1.20.4 ágak) —
+  ha a user ilyenre hivatkozik, kérdezz rá a pontos útvonalra.
+
+TELJES FORRÁSFÁJL-LISTA — REPO #2: InventoryOrganizerMod-26.2
+(ABSZOLÚT ÚTVONALAK, ez tűnik a "fő" aktív 26.2 munkamásolatnak)
+-------------------
+Gyökér: C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2
+
+Build/config:
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\build.gradle
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\gradle.properties
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\settings.gradle
+
+Java forrásfájlok (com.example.inventoryorganizer), csomag szerint:
+
+  Gyökér csomag:
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\ChestIdentifier.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\DeathSortTracker.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\DevCommandsClient.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\FightModeTracker.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\InOrComponents.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\InventoryOrganizer.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\InventoryOrganizerClient.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\InventorySorter.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\ServerEnvironment.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\ShulkerIdHolder.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\SortLogic.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\StorageSorter.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\WarehouseEngine.java
+
+  client\ csomag:
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\client\SwitchToolHandler.java
+
+  config\ csomag (GUI képernyők, config-adatmodellek):
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\BundleProfile.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\BundleProfileListScreen.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\ChestProfileListScreen.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\ConfigScreenBuilder.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\CustomGroupEditorScreen.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\CustomGroupListScreen.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\GroupTextFile.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\HelpScreen.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\HudLayoutScreen.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\HudSettings.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\Kit.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\KitFile.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\KitsScreen.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\ModMenuIntegration.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\OrganizerConfig.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\OstPermScreen.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\SlotRule.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\SortingOrderConfigScreen.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\SpecialSettingsScreen.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\StoragePreset.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\StyledButton.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\SwitchRanksScreen.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\VisualInventoryConfigScreen.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\config\WarehouseGroup.java
+
+  crafting\ csomag:
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\crafting\RemoteCraftPanel.java
+
+  hud\ csomag:
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\hud\HudRenderer.java
+
+  mixin\ csomag:
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\mixin\BaseContainerShulkerMixin.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\mixin\ContainerScreenAccessor.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\mixin\ContainerScrollMixin.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\mixin\CraftingRemovedMixin.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\mixin\CreativeInventoryScreenMixin.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\mixin\InventoryScreenMixin.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\mixin\OptionsScreenMixin.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\mixin\PlaceRecipeMixin.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\mixin\PlayerAttackTickerAccessor.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\mixin\PlayerItemSwitchMixin.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\mixin\RecipeBookCraftableMixin.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\mixin\ShulkerBoxBlockEntityMixin.java
+
+  warehouse\ csomag (raktár-rendszer, hálózati payload-ok):
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\ChestRules.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\CraftDepositPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\CraftReturnGridPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\CraftStockPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\CraftStockQueryPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\CraftWithdrawPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\DeleteLinkPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\LinkMapDataPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\OstRosterPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\RemoteStock.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\RequestOstRosterPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\SetOstPermPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\ShulkerAssignPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\ShulkerIdPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\SortBundlesPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\SortLinkPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\SortWarehousePayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\SwitchCapabilityPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\SwitchTriggerPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\SyncGroupsPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\UploadLinkPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\WarehouseClient.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\WarehouseHelloPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\WarehouseLinks.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\WarehouseMapQueryPayload.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\WarehouseMapScreen.java
+  C:\Users\mihal\Documents\Versions\InventoryOrganizerMod-26.2\src\main\java\com\example\inventoryorganizer\warehouse\WarehouseNet.java
+
+TELJES FORRÁSFÁJL-LISTA — REPO #1: InventoryOrganizerMod (root)
+(ABSZOLÚT ÚTVONALAK, egyszerűbb/régebbi állapot, ports\1.21.11 is itt van)
+-------------------
+Gyökér: C:\Users\mihal\Documents\InventoryOrganizerMod
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\FightModeTracker.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\InventoryOrganizer.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\InventoryOrganizerClient.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\InventorySorter.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\StorageSorter.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\ConfigScreenBuilder.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\CustomGroupEditorScreen.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\CustomGroupListScreen.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\GroupTextFile.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\Kit.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\KitsScreen.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\ModMenuIntegration.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\OrganizerConfig.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\SlotRule.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\SortingOrderConfigScreen.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\StorageConfigScreen.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\StoragePreset.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\StyledButton.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\config\VisualInventoryConfigScreen.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\mixin\CreativeInventoryScreenMixin.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\mixin\InventoryScreenMixin.java
+  C:\Users\mihal\Documents\InventoryOrganizerMod\src\main\java\com\example\inventoryorganizer\mixin\OptionsScreenMixin.java
+
+Egyéb port-mappa (tartalmát nem listáztam részletesen, nézd meg helyben):
+  C:\Users\mihal\Documents\InventoryOrganizerMod\ports\1.21.11\
+
+VERZIÓ-TÁMOGATÁSI SZABÁLY (FONTOS)
+-------------------
+- A 3 legújabb Minecraft verzió kap új feature-t.
+- 26.1 supportja MEGSZŰNT 1.5.3-tól (nagy kód-eltérések miatt nehéz
+  együtt karbantartani a 26.2-vel).
+- 1.5.4-től KIZÁRÓLAG a 26.2 (és往 fel) kap frissítést — ezt a userrel
+  közösen döntöttük el és a changelog-ba is bekerült explicit Version
+  Support Policy szekcióként. Ha valaki 26.1/26.1.1/26.1.2-re kér
+  fixet, az csak community-kérésre történik, nem alapértelmezett.
+- A changelog NYELVE MINDIG ANGOL (kiadási changelog), még akkor is,
+  ha a user maga magyarul kommunikál.
+
+FŐ FUNKCIÓK (ÁLLAPOT: KÉSZ, KIADVA)
+-------------------
+- Per-chest (láda-)profilok: carrying mode, chest-azonosítás (név ->
+  koordináta -> tábla-szöveg sorrendben), tábla = név, stack-
+  összevonás, halál utáni rendezés időzítése. Kiadva 1.3.0-ban.
+- Warehouse (raktár) rendszer, v1.4 link-modell: lokális profilok +
+  szerver-szinkron linkek, reveal-on-open, per-player OST (One-Stack-
+  Transfer?) jogosultság, lopás-védelem. A RÉGI, korábbi owner/vendég/
+  perm modell (chest_profile_final_model) EL LETT DOBVA, ne hivatkozz
+  rá mint aktuális rendszerre.
+- Távoli (remote) crafting: crafting table mellett a közeli ládák
+  készlete elérhető. Phase 1 (item-lehívás) KÉSZ. Phase 2 (auto-craft)
+  MÉG HÁTRA VAN — ha a user erről kérdez, tudd hogy ez nyitott munka.
+  1.5.0-ban jött a feltöltő slot (kurzor -> chest + OST); a recept-
+  visszapakolás még hátravan (nyitott elem).
+- Testreszabható HUD: drag-and-drop overlay (combat / mini-inventory /
+  szett+durability blokk), 1.4.2-ben.
+- Lokalizált Guide (in-game súgó képernyő) 9 nyelven: en_us, de_de,
+  es_es, fr_fr, hu_hu, ja_jp, pt_br, ru_ru, zh_cn.
+- Auto Tool Switch: crosshair-alapú, automatikus eszközváltás. 1.5.1-ben
+  csak SP-szerű, gomb-triggerelt szerver-módban; 1.5.2-től TELJES
+  szerver-támogatás: kliens számol (van saját slot-szabálya, group-jai),
+  szerver csak validál és alkalmaz (TYPE_APPLY: forrás slot + hova
+  kerüljön a kiszorított item). Kliens-oldali predikció (azonnali
+  vizuális), szerver megerősíti/korrigál. Fight Mode: harc közben egy
+  OI fut, aztán auto-switch gomb-módra vált (nehogy makrónak tűnjön),
+  harc végén vissza auto-ra.
+- Beépített (builtin) group-ok materializálva: a korábbi heurisztikus
+  fix group-ok most VALÓDI, szerkeszthető custom group-ok (ranks +
+  editor + sorrend), egyszeri migráció fut le.
+- Rendező (sorter) hotbar-szabály fix: hotbar szabály/tier csak akkor
+  megy, ha ANY != , lásd isSortableSlot logika.
+- Bundle-töltés (fillBundles) javítások: a verify UTÁN fusson,
+  matchesContentRule kezelje a "cg:" (custom group?) prefixet.
+- Szerver group-szinkron (1.5.1): custom group-tagság kliens->szerver
+  szinkronizálva, dedikált szervereken is működnek a group-ok.
+- Dev parancsok: /InOr developer | /InOr disk — SP kliens-dump, illetve
+  szerver konzolról <player> paraméterrel hívható forma.
+
+BIZTONSÁGI ÁLLAPOT
+-------------------
+- Szerver-oldal solidnak minősítve egy biztonsági review után.
+- Egy reveal-on-open enumeration rés volt (információ-szivárgás arról,
+  mely ládák léteznek/kihez tartoznak) — JAVÍTVA 1.4.2-ben.
+- Auto-switch szerver-oldal: per-player slot validáció (0-8 tartomány),
+  csak a kérő játékos SAJÁT inventoryját érinti, count-conserving,
+  rate-limitelve (max 10 swap/sec).
+
+TECH DEBT / REFAKTOR TERV (NEM SÜRGŐS, DE ISMERT)
+-------------------
+- A mod kb. 7.5/10 minőségűnek van értékelve (belső becslés).
+- Terv: heurisztikus item/csoport-felismerésről áttérni property/tag
+  alapú rendszerre. EZ NEM AUTOMATA CSERÉVEL történik és NEM
+  SÜRGŐS/AKTUÁLIS — csak egy hosszútávú irány, ne kezdj bele kérés
+  nélkül.
+
+MODRINTH / BEVÉTEL KONTEXT
+-------------------
+- Kb. 45 Ft / 100 letöltés ráta, $10 a kifizetési küszöb (csak
+  kontextus, ha a user erről kérdez vagy tervez).
+
+MULTI-MOD BUNDLE KAPCSOLAT (FONTOS, EZ MÁS CHATBEN FUT)
+-------------------
+- Van egy hosszútávú terv: az InOr és egyéb saját modok (pl. CaveMap,
+  lásd HANDOFF_CAVEMAP.txt) egy közös, opcionális "bundle" JAR-ba
+  kerülnek, modulárisan kapcsolható/kikapcsolható modulokként.
+- Az InOr modulnak a bundle-ben BYTE-FOR-BYTE AZONOSNAK kell lennie a
+  standalone kiadással — ez a jelenlegi tervezési elv, ne törd meg
+  hard-coded, bundle-specifikus függőségekkel.
+- A bundle összeállítása egy KÜLÖN, dedikált chatben történik (ami
+  ismeri mind az InOr, mind a CaveMap állapotát) — ha ebben a chatben
+  bundle-specifikus kérés jön, irányítsd oda a usert, vagy jelezd hogy
+  ez másik session hatásköre, ha nem az vagy.
+
+ÁLTALÁNOS MUNKAMÓDSZER-ELVÁRÁSOK (a usertől)
+-------------------
+- A user MAGYARUL kommunikál, elvárja hogy a válaszok is magyarul
+  legyenek (kivéve a kiadási changelog, ami mindig angol).
+- Ha egy log-fájl helye ismert/megadott, OLVASD EL KÖZVETLENÜL magad,
+  ne kérj paste-elt tartalmat a usertől.
+- Óvatosan a Minecraft/Fabric API tippeléssel — ha bizonytalan vagy egy
+  API pontos szignatúrájában, inkább ellenőrizd a projektben már
+  meglévő, hasonló mintákat (pl. HelpScreen.java, WarehouseMapScreen.
+  java, InventoryOrganizerClient.java — ezek jó referenciák keybind/
+  Screen/render mintákhoz a 26.2 ághoz), vagy a mapped jar-ból (javap).
+- Verzió-specifikus munkánál mindig tisztázd, melyik port-mappában
+  (26.1.x / 26.2 / régebbi 1.20.x ág) kell a változtatást elvégezni,
+  és hogy kell-e azt más ágakba is átvezetni.
