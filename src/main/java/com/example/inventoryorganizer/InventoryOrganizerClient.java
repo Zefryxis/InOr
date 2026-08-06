@@ -1165,6 +1165,13 @@ public class InventoryOrganizerClient implements ClientModInitializer {
         // nothing to do with "move this item" — quick-moving a hovered slot mid-trade (e.g. sending a
         // sword flying while just scrolling to buy something) makes no sense here at all.
         if (screen instanceof net.minecraft.client.gui.screens.inventory.MerchantScreen) return false;
+        // Explicit, named fight-mode block: scroll-move can relocate an item near-instantly, which reads
+        // exactly like a macro/auto-hotbar tool to anti-cheat during combat — never allow it while Fight
+        // Mode is active, regardless of anything else. (ServerEnvironment.canUseFree() below already
+        // folds FightModeTracker.isActive() into its "private environment" check, so this is redundant
+        // with it today — kept as its own explicit, defense-in-depth check so it can't silently regress
+        // if canUseFree()'s semantics ever change.)
+        if (FightModeTracker.isCombatActive()) return false;
         if (!ServerEnvironment.canUseFree()) return false;
         if (!OrganizerConfig.get().isScrollMoveEnabled()) return false;
         // Never act (and never consume the scroll) if the cursor isn't actually over the inventory/
