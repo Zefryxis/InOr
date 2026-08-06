@@ -46,7 +46,7 @@ public class ChestProfileListScreen extends Screen {
     }
 
     public ChestProfileListScreen(Screen parent, String bindName, List<int[]> bindPositions, int bindSize, String bindSign) {
-        super(Component.literal("Chest Profiles"));
+        super(Component.translatable("inventory-organizer.chest_profiles.screen_title"));
         this.parent = parent;
         this.config = OrganizerConfig.get();
         this.bindName = bindName;

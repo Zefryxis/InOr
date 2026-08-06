@@ -83,8 +83,8 @@ public final class RemoteCraftPanel {
         layout();
         Minecraft mc = Minecraft.getInstance();
 
-        search = new EditBox(mc.font, panelX, panelY, panelW - 32, 14, Component.literal("Search"));
-        search.setHint(Component.literal("§7Search…"));
+        search = new EditBox(mc.font, panelX, panelY, panelW - 32, 14, Component.translatable("inventory-organizer.remote_craft.search_field"));
+        search.setHint(Component.translatable("inventory-organizer.remote_craft.search_hint"));
         search.setResponder(s -> { scroll = 0; rebuild(); });
         Screens.getWidgets(screen).add(search);
 
@@ -98,7 +98,7 @@ public final class RemoteCraftPanel {
         Screens.getWidgets(screen).add(downBtn);
 
         // Qty box (how many to pull per click). Default 1.
-        qty = new EditBox(mc.font, panelX + 26, panelY + 16, 44, 14, Component.literal("Qty"));
+        qty = new EditBox(mc.font, panelX + 26, panelY + 16, 44, 14, Component.translatable("inventory-organizer.remote_craft.qty_field"));
         qty.setValue("1");
         qty.setMaxLength(5);
         Screens.getWidgets(screen).add(qty);
@@ -358,8 +358,8 @@ public final class RemoteCraftPanel {
         context.fill(bx + 2, listTopY - 3, bx + bw - 2, listTopY - 2, 0x66D8A24A);
 
         int reach = (int) WarehouseClient.craftReach();
-        context.text(mc.font, Component.literal("§6§lMaterials §7(" + reach + "m)"), panelX, panelY - 11, 0xFFFFFFFF);
-        context.text(mc.font, Component.literal("§7Qty:"), panelX, panelY + 19, 0xFFAAAAAA);
+        context.text(mc.font, Component.translatable("inventory-organizer.remote_craft.materials_header", reach), panelX, panelY - 11, 0xFFFFFFFF);
+        context.text(mc.font, Component.translatable("inventory-organizer.remote_craft.qty_label"), panelX, panelY + 19, 0xFFAAAAAA);
         // Chest-name section headers.
         for (int i = 0; i < headerDraw.size(); i++) {
             int[] xy = headerDraw.get(i);
@@ -376,7 +376,7 @@ public final class RemoteCraftPanel {
         }
         // Scroll hint when there's more than fits.
         if (allRows.size() > visRows) {
-            context.text(mc.font, Component.literal("§7scroll ⬍"), panelX + panelW - 40, panelY + 19, 0xFF888888);
+            context.text(mc.font, Component.translatable("inventory-organizer.remote_craft.scroll_hint"), panelX + panelW - 40, panelY + 19, 0xFF888888);
         }
 
         renderDeposit(context);
@@ -396,14 +396,14 @@ public final class RemoteCraftPanel {
         // Downward arrow hint = "drop a held item here → it goes to a nearby chest".
         context.text(mc.font, Component.literal("§b⬇"), x + (DEP - mc.font.width("⬇")) / 2, y + 5, 0xFF66CCFF);
         if (dragMode) {
-            Component lbl = Component.literal("§e release to drop");
+            Component lbl = Component.translatable("inventory-organizer.remote_craft.release_to_drop");
             context.text(mc.font, lbl, x + DEP + 4, y + 4, 0xFFFFDD55);
         } else {
             // Label centred under the slot. Two uses: drop a held item to stash it, or click empty-handed
             // to send the whole crafting grid back to the chests (cancel the recipe).
-            Component lbl = Component.literal("§7→ chest");
+            Component lbl = Component.translatable("inventory-organizer.remote_craft.to_chest");
             context.text(mc.font, lbl, x + DEP / 2 - mc.font.width(lbl.getString()) / 2, y + DEP + 2, 0xFFAAAAAA);
-            Component lbl2 = Component.literal("§8(empty hand = grid→chest)");
+            Component lbl2 = Component.translatable("inventory-organizer.remote_craft.empty_hand_hint");
             context.text(mc.font, lbl2, x + DEP / 2 - mc.font.width(lbl2.getString()) / 2, y + DEP + 12, 0xFF888888);
         }
     }

@@ -48,17 +48,17 @@ public class ConfigScreenBuilder {
     public static Screen build(Screen parent) {
         ConfigBuilder builder = ConfigBuilder.create()
                 .setParentScreen(parent)
-                .setTitle(Component.literal("Item Names Reference"));
+                .setTitle(Component.translatable("inventory-organizer.item_names.screen_title"));
 
         ConfigEntryBuilder entryBuilder = builder.entryBuilder();
 
         // === Item Names (reference list) ===
-        ConfigCategory namesCategory = builder.getOrCreateCategory(Component.literal("Item Names"));
+        ConfigCategory namesCategory = builder.getOrCreateCategory(Component.translatable("inventory-organizer.item_names.category"));
 
         buildItemMaps();
 
         namesCategory.addEntry(entryBuilder.startTextDescription(
-                Component.literal("Total items: " + nameToIdMap.size() + "\nItems sorted A-Z. Click a letter group to expand it.")
+                Component.translatable("inventory-organizer.item_names.total_items", nameToIdMap.size())
         ).build());
 
         // Sort items alphabetically and group by first letter

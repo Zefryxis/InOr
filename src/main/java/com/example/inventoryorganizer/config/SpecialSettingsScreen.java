@@ -30,7 +30,7 @@ public class SpecialSettingsScreen extends Screen {
     private String pendingMode = null;
 
     public SpecialSettingsScreen(Screen parent) {
-        super(Component.literal("Special Settings"));
+        super(Component.translatable("inventory-organizer.special.screen_title"));
         this.parent = parent;
         this.config = OrganizerConfig.get();
     }

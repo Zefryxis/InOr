@@ -31,7 +31,7 @@ public class BundleProfileListScreen extends Screen {
     private static final int ROW_H = 22;
 
     public BundleProfileListScreen(Screen parent) {
-        super(Component.literal("Bundle Profiles"));
+        super(Component.translatable("inventory-organizer.bundle_profiles.screen_title"));
         this.parent = parent;
         this.config = OrganizerConfig.get();
     }

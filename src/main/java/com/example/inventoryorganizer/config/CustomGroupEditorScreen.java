@@ -68,7 +68,7 @@ public class CustomGroupEditorScreen extends Screen {
     }
 
     public CustomGroupEditorScreen(Screen parent, String groupName, boolean isBuiltin) {
-        super(Component.literal((isBuiltin ? "Built-in Group: " : "Group Editor: ") + groupName));
+        super(Component.translatable(isBuiltin ? "inventory-organizer.group_editor.title_builtin" : "inventory-organizer.group_editor.title_custom", groupName));
         this.parent = parent;
         this.config = OrganizerConfig.get();
         this.groupName = groupName;
@@ -178,9 +178,9 @@ public class CustomGroupEditorScreen extends Screen {
         paletteY = gridY + 4;
         paletteH = height - paletteY - 44;
 
-        searchField = new EditBox(font, paletteX, paletteY - 16, paletteW, 14, Component.literal("Search..."));
+        searchField = new EditBox(font, paletteX, paletteY - 16, paletteW, 14, Component.translatable("inventory-organizer.group_editor.search_field"));
         searchField.setMaxLength(50);
-        searchField.setHint(Component.literal("Search items..."));
+        searchField.setHint(Component.translatable("inventory-organizer.group_editor.search_hint"));
         searchField.setTextColor(0xFFFFFFFF);
         searchField.setResponder(t -> applyFilter());
         addRenderableWidget(searchField);
@@ -194,7 +194,7 @@ public class CustomGroupEditorScreen extends Screen {
         int totalW = btnW * 5 + gap * 4;
         int startX = width / 2 - totalW / 2;
 
-        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Save"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.group_editor.save"), btn -> {
             saveGroup();
             if (!isBuiltin) {
                 try {
@@ -210,7 +210,7 @@ public class CustomGroupEditorScreen extends Screen {
 
         if (isBuiltin) {
             // Built-in groups: replace Folder/Export with a "Reset" button (revert to default heuristic).
-            addRenderableWidget(StyledButton.styledBuilder(Component.literal("Reset"), btn -> {
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.group_editor.reset"), btn -> {
                 config.resetBuiltinGroup(groupName);
                 config.save();
                 allItems.clear();
@@ -219,16 +219,16 @@ public class CustomGroupEditorScreen extends Screen {
                 loadPage();
             }).bounds(startX + (btnW + gap), btnY, btnW, 20).build());
         } else {
-            addRenderableWidget(StyledButton.styledBuilder(Component.literal("Folder"), btn -> {
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.group_editor.folder"), btn -> {
                 GroupTextFile.openGroupsFolder();
                 try {
-                    showStatus("\u00a7bFolder: \u00a7f" + GroupTextFile.getGroupsFolder().toAbsolutePath());
+                    showStatus(tr("inventory-organizer.group_editor.status_folder", GroupTextFile.getGroupsFolder().toAbsolutePath()));
                 } catch (IOException e) {
-                    showStatus("\u00a7cCannot open folder: " + e.getMessage());
+                    showStatus(tr("inventory-organizer.group_editor.status_folder_failed", e.getMessage()));
                 }
             }).bounds(startX + (btnW + gap), btnY, btnW, 20).build());
 
-            addRenderableWidget(StyledButton.styledBuilder(Component.literal("Export"), btn -> {
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.group_editor.export"), btn -> {
                 try {
                     Path target = GroupTextFile.fileForGroup(groupName);
                     exportToFile(target);
@@ -238,26 +238,26 @@ public class CustomGroupEditorScreen extends Screen {
             }).bounds(startX + (btnW + gap) * 2, btnY, btnW, 20).build());
         }
 
-        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Clear All"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.group_editor.clear_all"), btn -> {
             for (int i = 0; i < GRID_SIZE; i++) cells[i] = null;
             allItems.clear();
             page = 0;
             loadPage();
         }).bounds(startX + (btnW + gap) * 3, btnY, btnW, 20).build());
 
-        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Back"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.group_editor.back"), btn -> {
             Minecraft.getInstance().gui.setScreen(parent);
         }).bounds(startX + (btnW + gap) * 4, btnY, btnW, 20).build());
 
         // "Set Icon": use the currently selected palette item as this group's display icon (the small
         // icon shown next to the group in the slot-config picker). Stored as preference cg_icon_<name>.
-        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Set Icon ⭐"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.group_editor.set_icon"), btn -> {
             if (selectedItemId != null) {
                 config.setPreference("cg_icon_" + groupName, new String[]{ selectedItemId });
                 config.save();
-                showStatus("§aGroup icon set to §f" + selectedItemId);
+                showStatus(tr("inventory-organizer.group_editor.status_icon_set", selectedItemId));
             } else {
-                showStatus("§ePick an item in the palette first, then click Set Icon.");
+                showStatus(tr("inventory-organizer.group_editor.status_icon_pick_first"));
             }
         }).bounds(startX, btnY - 24, btnW, 20).build());
 
@@ -334,6 +334,8 @@ public class CustomGroupEditorScreen extends Screen {
         }
     }
 
+    private static String tr(String key, Object... args) { return Component.translatable(key, args).getString(); }
+
     private void showStatus(String msg) {
         statusMessage = msg;
         statusUntilMs = System.currentTimeMillis() + 4000L;
@@ -377,9 +379,9 @@ public class CustomGroupEditorScreen extends Screen {
         super.extractRenderState(context, mouseX, mouseY, delta);
 
         context.centeredText(font,
-            Component.literal((isBuiltin ? "\u00a7eBuilt-in Group: \u00a7f" : "\u00a7eGroup Editor: \u00a7f") + groupName), width / 2, 4, 0xFFFFFFFF);
+            Component.translatable(isBuiltin ? "inventory-organizer.group_editor.header_builtin" : "inventory-organizer.group_editor.header_custom", groupName), width / 2, 4, 0xFFFFFFFF);
         context.text(font,
-            Component.literal("Select item from list, then click a cell to add it. Right-click to clear."),
+            Component.translatable("inventory-organizer.group_editor.subtitle"),
             width / 2 - 160, 16, 0xFFAAAAAA);
 
         drawGrid(context, mouseX, mouseY);
@@ -388,7 +390,7 @@ public class CustomGroupEditorScreen extends Screen {
         // Page indicator between the \u25c4 \u25ba buttons.
         int pageY = (height - 28) - 22;
         context.centeredText(font,
-            Component.literal("\u00a7fPage " + (page + 1) + "/" + pageCount()),
+            Component.translatable("inventory-organizer.group_editor.page_indicator", (page + 1), pageCount()),
             width / 2, pageY + 5, 0xFFFFFFFF);
 
         // Re-render searchField on top of the palette panel fill (fill covers widget drawn by super.render)
@@ -431,24 +433,24 @@ public class CustomGroupEditorScreen extends Screen {
         context.fill(gx + gw - 2, gy, gx + gw, gy + gh, 0xFF4466AA);
         context.fill(gx + 4, gy + 4, gx + gw - 4, gy + 20, 0xFF111133);
         context.centeredText(font,
-            Component.literal("\u00a7e\u00a7lGroup Editor Guide"), width / 2, gy + 8, 0xFFFFFF55);
+            Component.translatable("inventory-organizer.group_editor.guide_title"), width / 2, gy + 8, 0xFFFFFF55);
 
         int lx = gx + 12, ly = gy + 26, lh = 12;
 
-        context.text(font, Component.literal("\u00a7b--- Custom Groups ---"), lx, ly, 0xFF55FFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7fGroups are item collections usable as slot rules."), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a77Use as rule: 'g:<name>' in the inventory config."), lx, ly, 0xFFAAAAAA); ly += lh + 3;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_custom_head"), lx, ly, 0xFF55FFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_custom_1"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_custom_2"), lx, ly, 0xFFAAAAAA); ly += lh + 3;
 
-        context.text(font, Component.literal("\u00a7b--- How to use ---"), lx, ly, 0xFF55FFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7e[1] \u00a7fSearch for an item in the right panel"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7e[2] \u00a7fLeft-click a list entry to select it (blue highlight)"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7e[3] \u00a7fLeft-click a cell to place the selected item there"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7e[4] \u00a7fRight-click a cell to remove the item from it"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7e[5] \u00a7f'Clear All' removes all items from the grid at once"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7e[6] \u00a7f'Save' stores the group and returns to the list"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7e[7] \u00a7fScroll wheel \u00a77or\u00a7f drag the right scrollbar to navigate the list"), lx, ly, 0xFFFFFFFF); ly += lh + 3;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_use_head"), lx, ly, 0xFF55FFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_use_1"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_use_2"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_use_3"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_use_4"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_use_5"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_use_6"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_use_7"), lx, ly, 0xFFFFFFFF); ly += lh + 3;
 
-        context.text(font, Component.literal("\u00a7b--- File paths ---"), lx, ly, 0xFF55FFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_paths_head"), lx, ly, 0xFF55FFFF); ly += lh;
         String savedFolder;
         String importFolder;
         try {
@@ -458,17 +460,17 @@ public class CustomGroupEditorScreen extends Screen {
             savedFolder = "<game dir>/inventory-organizer-groups";
             importFolder = "<game dir>/inventory-organizer-groups/import";
         }
-        context.text(font, Component.literal("\u00a77Saved groups: \u00a7f" + truncatePath(savedFolder, 70)), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a77Drop .txt files to import: \u00a7f" + truncatePath(importFolder, 60)), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a77Use 'Folder' button to open the folder in your file manager."), lx, ly, 0xFFAAAAAA); ly += lh + 3;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_path_saved", truncatePath(savedFolder, 70)), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_path_import", truncatePath(importFolder, 60)), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_path_hint"), lx, ly, 0xFFAAAAAA); ly += lh + 3;
 
-        context.text(font, Component.literal("\u00a7b--- 26.1 notes ---"), lx, ly, 0xFF55FFFF); ly += lh;
-        context.text(font, Component.literal("\u00a77Item icons use 2D PNG textures (3D models like shield/crossbow"), lx, ly, 0xFFAAAAAA); ly += lh;
-        context.text(font, Component.literal("\u00a77show flat fallbacks). Tooltips disabled in this version."), lx, ly, 0xFFAAAAAA); ly += lh + 4;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_notes_head"), lx, ly, 0xFF55FFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_notes_1"), lx, ly, 0xFFAAAAAA); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.group_editor.guide_notes_2"), lx, ly, 0xFFAAAAAA); ly += lh + 4;
 
         context.fill(gx + 12, ly, gx + gw - 12, ly + 1, 0xFF444444); ly += 5;
         context.centeredText(font,
-            Component.literal("\u00a77Click outside or press \u00a7e[?]\u00a77 to close"),
+            Component.translatable("inventory-organizer.group_editor.guide_close_hint"),
             width / 2, ly, 0xFF888888);
     }
 
@@ -488,7 +490,7 @@ public class CustomGroupEditorScreen extends Screen {
         context.horizontalLine(panelLeft, panelLeft + panelW2, panelTop + panelH2, 0xFF666666);
         context.verticalLine(panelLeft, panelTop, panelTop + panelH2, 0xFF666666);
         context.verticalLine(panelLeft + panelW2, panelTop, panelTop + panelH2, 0xFF666666);
-        context.text(font, Component.literal("Items in Group"), panelLeft + 2, panelTop - 10, 0xFFFFAA00);
+        context.text(font, Component.translatable("inventory-organizer.group_editor.items_in_group"), panelLeft + 2, panelTop - 10, 0xFFFFAA00);
 
         for (int row = 0; row < GRID_ROWS; row++) {
             for (int col = 0; col < GRID_COLS; col++) {
@@ -547,7 +549,7 @@ public class CustomGroupEditorScreen extends Screen {
         context.horizontalLine(paletteX - 8, paletteX + paletteW + 8, paletteY + paletteH + 8, 0xFF666666);
         context.verticalLine(paletteX - 8, paletteY - 24, paletteY + paletteH + 8, 0xFF666666);
         context.verticalLine(paletteX + paletteW + 8, paletteY - 24, paletteY + paletteH + 8, 0xFF666666);
-        context.text(font, Component.literal("Item Palette"), paletteX, paletteY - 22, 0xFFFFAA00);
+        context.text(font, Component.translatable("inventory-organizer.group_editor.item_palette"), paletteX, paletteY - 22, 0xFFFFAA00);
 
         // Scissor to palette bounds
         context.enableScissor(paletteX, paletteY, paletteX + paletteW, paletteY + paletteH);

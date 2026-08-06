@@ -23,7 +23,7 @@ public class KitsScreen extends Screen {
     private boolean showHelp = false;
 
     public KitsScreen(Screen parent, boolean autoMode) {
-        super(Component.literal("Kits"));
+        super(Component.translatable("inventory-organizer.kits.screen_title"));
         this.parent = parent;
         this.config = OrganizerConfig.get();
         this.autoMode = autoMode;
@@ -52,7 +52,7 @@ public class KitsScreen extends Screen {
 
         // Title label
         Button titleBtn = StyledButton.styledBuilder(
-                Component.literal("Kits - Save and load presets"),
+                Component.translatable("inventory-organizer.kits.subtitle"),
                 btn -> {}
         ).bounds(centerX - 130, y, 260, 20).build();
         titleBtn.active = false;
@@ -74,7 +74,7 @@ public class KitsScreen extends Screen {
 
             // Kit name label
             Button nameBtn = StyledButton.styledBuilder(
-                    Component.literal(kit.getName() + " (" + ruleCount + " rules)"),
+                    Component.translatable("inventory-organizer.kits.entry_label", kit.getName(), ruleCount),
                     btn -> {}
             ).bounds(centerX - 150, y, 130, 20).build();
             nameBtn.active = false;
@@ -82,36 +82,36 @@ public class KitsScreen extends Screen {
 
             // Load button
             addRenderableWidget(StyledButton.styledBuilder(
-                    Component.literal("Load"),
+                    Component.translatable("inventory-organizer.kits.load"),
                     btn -> {
                         config.loadKit(config.getKits().get(kitIndex), autoMode);
                         config.save();
-                        showStatus("Loaded: " + config.getKits().get(kitIndex).getName());
+                        showStatusTr("inventory-organizer.kits.status_loaded", config.getKits().get(kitIndex).getName());
                     }
             ).bounds(centerX - 15, y, 50, 20).build());
 
             // Save to button
             final String saveKitName = kit.getName();
             addRenderableWidget(StyledButton.styledBuilder(
-                    Component.literal("Save to"),
+                    Component.translatable("inventory-organizer.kits.save_to"),
                     btn -> {
                         config.saveToKit(kitIndex, autoMode);
                         config.save();
-                        showStatus("Saved to: " + saveKitName);
+                        showStatusTr("inventory-organizer.kits.status_saved_to", saveKitName);
                     }
             ).bounds(centerX + 40, y, 55, 20).build());
 
             // Delete button
             final String delKitName = kit.getName();
             addRenderableWidget(StyledButton.styledBuilder(
-                    Component.literal("Delete"),
+                    Component.translatable("inventory-organizer.kits.delete"),
                     btn -> {
                         config.deleteKit(kitIndex);
                         config.save();
                         if (scrollOffset > 0 && scrollOffset >= config.getKits().size()) {
                             scrollOffset--;
                         }
-                        showStatus("Deleted: " + delKitName);
+                        showStatusTr("inventory-organizer.kits.status_deleted", delKitName);
                     }
             ).bounds(centerX + 100, y, 50, 20).build());
 
@@ -136,7 +136,7 @@ public class KitsScreen extends Screen {
 
         if (kits.isEmpty()) {
             Button emptyBtn = StyledButton.styledBuilder(
-                    Component.literal("No kits yet - create one below!"),
+                    Component.translatable("inventory-organizer.kits.empty"),
                     btn -> {}
             ).bounds(centerX - 120, y, 240, 20).build();
             emptyBtn.active = false;
@@ -147,20 +147,20 @@ public class KitsScreen extends Screen {
         y += 10;
 
         // Create new kit section
-        nameField = new EditBox(font, centerX - 150, y, 200, 20, Component.literal("Kit name"));
-        nameField.setHint(Component.literal("Enter kit name..."));
+        nameField = new EditBox(font, centerX - 150, y, 200, 20, Component.translatable("inventory-organizer.kits.name_field"));
+        nameField.setHint(Component.translatable("inventory-organizer.kits.name_hint"));
         nameField.setMaxLength(30);
         addRenderableWidget(nameField);
 
         addRenderableWidget(StyledButton.styledBuilder(
-                Component.literal("+ Create"),
+                Component.translatable("inventory-organizer.kits.create"),
                 btn -> {
                     String name = nameField.getValue().trim();
                     if (!name.isEmpty()) {
                         config.saveCurrentAsKit(name, autoMode);
                         config.save();
                         nameField.setValue("");
-                        showStatus("Created: " + name);
+                        showStatusTr("inventory-organizer.kits.status_created", name);
                     }
                 }
         ).bounds(centerX + 55, y, 70, 20).build());
@@ -179,48 +179,48 @@ public class KitsScreen extends Screen {
         // ONE backup file holds EVERYTHING (groups+contents, profiles, slot rules, kits, HUD, prefs).
         // (Per-group import/export still lives on the Groups screen.)
         addRenderableWidget(StyledButton.styledBuilder(
-                Component.literal("Export Data"),
+                Component.translatable("inventory-organizer.kits.export_data"),
                 btn -> {
                     if (OrganizerConfig.exportBackup()) {
-                        String where = "kits folder";
+                        String where = tr("inventory-organizer.kits.status_kits_folder");
                         try { where = OrganizerConfig.backupFile().toString(); } catch (Exception ignored) {}
-                        showStatus("Exported all data → " + where);
+                        showStatusTr("inventory-organizer.kits.status_exported", where);
                     } else {
-                        showStatus("§cExport failed");
+                        showStatusTr("inventory-organizer.kits.status_export_failed");
                     }
                 }
         ).bounds(centerX - 115, height - 55, 90, 20).build());
 
         addRenderableWidget(StyledButton.styledBuilder(
-                Component.literal("Import Data"),
+                Component.translatable("inventory-organizer.kits.import_data"),
                 btn -> {
                     if (OrganizerConfig.importBackup()) {
                         scrollOffset = 0;
-                        showStatus("§aImported all data (restored).");
+                        showStatusTr("inventory-organizer.kits.status_imported");
                         rebuildWidgets();
                     } else {
-                        showStatus("§eNo backup file found in kits folder.");
+                        showStatusTr("inventory-organizer.kits.status_no_backup");
                     }
                 }
         ).bounds(centerX - 20, height - 55, 90, 20).build());
 
         addRenderableWidget(StyledButton.styledBuilder(
-                Component.literal("Folder"),
+                Component.translatable("inventory-organizer.kits.folder"),
                 btn -> KitFile.openKitsFolder()
         ).bounds(centerX + 75, height - 55, 45, 20).build());
 
         // Save button
         addRenderableWidget(StyledButton.styledBuilder(
-                Component.literal("Save"),
+                Component.translatable("inventory-organizer.kits.save"),
                 btn -> {
                     config.save();
-                    showStatus("Settings saved!");
+                    showStatusTr("inventory-organizer.kits.status_settings_saved");
                 }
         ).bounds(centerX - 100, height - 30, 90, 20).build());
 
         // Back button
         addRenderableWidget(StyledButton.styledBuilder(
-                Component.literal("Back"),
+                Component.translatable("inventory-organizer.kits.back"),
                 btn -> {
                     Minecraft.getInstance().gui.setScreen(parent);
                 }
@@ -260,38 +260,38 @@ public class KitsScreen extends Screen {
         context.fill(gx + gw - 2, gy, gx + gw, gy + gh, 0xFF4466AA);
         context.fill(gx + 4, gy + 4, gx + gw - 4, gy + 20, 0xFF111133);
         context.centeredText(font,
-            Component.literal("\u00a7e\u00a7lKits Guide"), width / 2, gy + 8, 0xFFFFFF55);
+            Component.translatable("inventory-organizer.kits.guide_title"), width / 2, gy + 8, 0xFFFFFF55);
 
         int lx = gx + 12, ly = gy + 26, lh = 13;
-        context.text(font, Component.literal("\u00a7b--- What are Kits? ---"), lx, ly, 0xFF55FFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7fKits save your current slot rules (item assignments)."), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a77They do NOT save the actual inventory contents."), lx, ly, 0xFFAAAAAA); ly += lh + 4;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_what_head"), lx, ly, 0xFF55FFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_what_1"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_what_2"), lx, ly, 0xFFAAAAAA); ly += lh + 4;
 
-        context.text(font, Component.literal("\u00a7b--- Actions ---"), lx, ly, 0xFF55FFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7e[1] \u00a7f'+ Create' \u00a77\u2013 type a name, press Enter or button to save"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7e[2] \u00a7f'Load' \u00a77\u2013 loads the kit's rules into the active config"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7e[3] \u00a7f'Save to' \u00a77\u2013 overwrites the kit with current rules"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7e[4] \u00a7f'Delete' \u00a77\u2013 permanently removes the kit"), lx, ly, 0xFFFFFFFF); ly += lh + 6;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_actions_head"), lx, ly, 0xFF55FFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_action_create"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_action_load"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_action_save_to"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_action_delete"), lx, ly, 0xFFFFFFFF); ly += lh + 6;
 
-        context.text(font, Component.literal("\u00a7b--- Full backup (Export / Import Data) ---"), lx, ly, 0xFF55FFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7e[5] \u00a7f'Export Data' \u00a77\u2013 saves ALL mod data to one backup file"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a77    (groups + contents, profiles, slot rules, kits, HUD, settings)"), lx, ly, 0xFFAAAAAA); ly += lh;
-        context.text(font, Component.literal("\u00a7e[6] \u00a7f'Import Data' \u00a77\u2013 restores everything from that backup file"), lx, ly, 0xFFFFFFFF); ly += lh;
-        context.text(font, Component.literal("\u00a7e[7] \u00a7f'Folder' \u00a77\u2013 opens the folder holding the backup file"), lx, ly, 0xFFFFFFFF); ly += lh + 4;
-        context.text(font, Component.literal("\u00a77Move setups between worlds/PCs: Export Data, copy the file, Import."), lx, ly, 0xFFAAAAAA); ly += lh;
-        context.text(font, Component.literal("\u00a77Import REPLACES your current settings. Per-group sharing is on Groups."), lx, ly, 0xFFAAAAAA); ly += lh + 4;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_backup_head"), lx, ly, 0xFF55FFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_backup_export"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_backup_export_detail"), lx, ly, 0xFFAAAAAA); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_backup_import"), lx, ly, 0xFFFFFFFF); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_backup_folder"), lx, ly, 0xFFFFFFFF); ly += lh + 4;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_backup_move"), lx, ly, 0xFFAAAAAA); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_backup_replace"), lx, ly, 0xFFAAAAAA); ly += lh + 4;
 
         // Live paths so users can find the folders without guessing.
         String kitsPath = "(folder not yet created)";
         String importPath = "(folder not yet created)";
         try { kitsPath = KitFile.getKitsFolder().toString(); } catch (Exception ignored) {}
         try { importPath = KitFile.getImportFolder().toString(); } catch (Exception ignored) {}
-        context.text(font, Component.literal("\u00a77Kits: \u00a78" + truncatePath(kitsPath, 65)), lx, ly, 0xFF888888); ly += lh;
-        context.text(font, Component.literal("\u00a77Import: \u00a78" + truncatePath(importPath, 65)), lx, ly, 0xFF888888); ly += lh + 4;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_path_kits", truncatePath(kitsPath, 65)), lx, ly, 0xFF888888); ly += lh;
+        context.text(font, Component.translatable("inventory-organizer.kits.guide_path_import", truncatePath(importPath, 65)), lx, ly, 0xFF888888); ly += lh + 4;
 
         context.fill(gx + 12, ly, gx + gw - 12, ly + 1, 0xFF444444); ly += 6;
         context.centeredText(font,
-            Component.literal("\u00a77Click outside or press \u00a7e[?]\u00a77 to close"),
+            Component.translatable("inventory-organizer.kits.guide_close_hint"),
             width / 2, ly, 0xFF888888);
     }
 
@@ -343,7 +343,7 @@ public class KitsScreen extends Screen {
                 config.saveCurrentAsKit(name, autoMode);
                 config.save();
                 nameField.setValue("");
-                showStatus("Created: " + name);
+                showStatusTr("inventory-organizer.kits.status_created", name);
                 return true;
             }
         }
@@ -361,6 +361,15 @@ public class KitsScreen extends Screen {
         statusMessage = message;
         statusTicks = 60; // ~3 seconds at 20 tps
         rebuildWidgets();
+    }
+
+    /** Resolves a translation key (with optional format args) and shows it as the status message. */
+    private void showStatusTr(String key, Object... args) {
+        showStatus(tr(key, args));
+    }
+
+    private static String tr(String key, Object... args) {
+        return Component.translatable(key, args).getString();
     }
 
     @Override

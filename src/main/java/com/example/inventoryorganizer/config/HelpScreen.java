@@ -29,7 +29,7 @@ public class HelpScreen extends Screen {
     private static final int LINE_H = 11;
 
     public HelpScreen(Screen parent) {
-        super(Component.literal("Inventory Organizer — Guide"));
+        super(Component.translatable("inventory-organizer.guide.screen_title"));
         this.parent = parent;
         build();
     }
@@ -145,7 +145,7 @@ public class HelpScreen extends Screen {
             context.pose().scale(guiScaleCapF);
         }
         context.fill(0, 0, width, height, 0xFF12121C);
-        context.centeredText(font, Component.literal("§e§lInventory Organizer §7— §fGuide"), width / 2, 14, 0xFFFFFFFF);
+        context.centeredText(font, Component.translatable("inventory-organizer.guide.header"), width / 2, 14, 0xFFFFFFFF);
 
         // Panel: a thin border + darker inner fill.
         context.fill(boxX - 2, boxY - 2, boxX + boxW + 2, boxY + boxH + 2, 0xFF3A3A5A);
@@ -159,7 +159,7 @@ public class HelpScreen extends Screen {
 
         // Scroll hints, centred just outside the panel so they never overlap the text.
         if (scroll > 0) context.centeredText(font, Component.literal("§7▲"), width / 2, boxY - 12, 0xFFAAAAAA);
-        if (scroll < maxScroll) context.centeredText(font, Component.literal("§7▼ scroll for more"), width / 2, boxY + boxH + 4, 0xFFAAAAAA);
+        if (scroll < maxScroll) context.centeredText(font, Component.translatable("inventory-organizer.guide.scroll_more"), width / 2, boxY + boxH + 4, 0xFFAAAAAA);
 
         super.extractRenderState(context, mouseX, mouseY, delta);
 

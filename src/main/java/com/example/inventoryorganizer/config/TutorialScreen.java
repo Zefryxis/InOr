@@ -311,7 +311,7 @@ public class TutorialScreen extends Screen {
                         // header (SortingOrderConfigScreen.drawSectionHeader) above the exact numbered,
                         // white drag-list rows it draws for the criteria order.
                 int bx = cx - 90, by = stageY + 16;
-                GuiTextScale.text(context, font, Component.literal("§6▼ Sort Priority"), bx, by, 0xFFFFAA00);
+                GuiTextScale.text(context, font, Component.translatable("inventory-organizer.tutorial.sort_priority_demo"), bx, by, 0xFFFFAA00);
                 by += 15;
                 drawPriorityRow(context, bx, by, "1. Material");
                 by += 15;

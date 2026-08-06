@@ -25,6 +25,8 @@ public class VisualInventoryConfigScreen extends Screen {
     private final Screen parent;
     private final OrganizerConfig config;
 
+    private static String tr(String key, Object... args) { return Component.translatable(key, args).getString(); }
+
     // --- Text-based slot rules ---
     // Each slot stores a text string (e.g. "any", "empty", "g:blocks", "t:sword", "minecraft:diamond_sword")
     // This array is the SINGLE source of truth, synced to/from OrganizerConfig on load/save
@@ -126,7 +128,7 @@ public class VisualInventoryConfigScreen extends Screen {
     }
 
     public VisualInventoryConfigScreen(Screen parent) {
-        super(Component.literal("Inventory Config"));
+        super(Component.translatable("inventory-organizer.inventory_config.screen_title"));
         this.parent = parent;
         this.config = OrganizerConfig.get();
         // Show the switch as active only if both the user enabled it AND the server supports it.
@@ -413,9 +415,9 @@ public class VisualInventoryConfigScreen extends Screen {
         boolean firstCreate = searchField == null;
         boolean searchWasFocused = !firstCreate && searchField.isFocused();
         if (firstCreate) {
-            searchField = new EditBox(font, paletteX, paletteY - 16, paletteW, 14, Component.literal("Search..."));
+            searchField = new EditBox(font, paletteX, paletteY - 16, paletteW, 14, Component.translatable("inventory-organizer.inventory_config.search_field"));
             searchField.setMaxLength(50);
-            searchField.setHint(Component.literal("Search items..."));
+            searchField.setHint(Component.translatable("inventory-organizer.inventory_config.search_hint"));
             searchField.setResponder(text -> applyFilter());
         } else {
             searchField.setX(paletteX);
@@ -512,7 +514,7 @@ public class VisualInventoryConfigScreen extends Screen {
         }
 
         // Tier Order warning + Solve button (shown when rules are set but tier order is not configured)
-        solveButton = StyledButton.styledBuilder(Component.literal("Solve"), btn -> {
+        solveButton = StyledButton.styledBuilder(Component.translatable("inventory-organizer.inventory_config.solve"), btn -> {
             config.getPreferences().remove("tier_order");
             config.applyDefaultTierOrder();
             config.save();
@@ -776,7 +778,7 @@ public class VisualInventoryConfigScreen extends Screen {
             context.fill(hx - 1,   hy1,     hx,           hy2,     hcol); // left
             context.fill(hx + tw2, hy1,     hx + tw2 + 1, hy2,     hcol); // right
         }
-        context.text(font, Component.literal("Select a rule from the list, then click a slot to assign it."), width / 2 - 150, 16, 0xFFAAAAAA);
+        context.text(font, Component.translatable("inventory-organizer.inventory_config.select_rule_hint"), width / 2 - 150, 16, 0xFFAAAAAA);
         // (The old "full inventory may be buggy" warning was removed from the slot menu — the rebuilt
         // verify+retry sorter handles a full inventory reliably and shows a precise "no room for X" message
         // only when an item genuinely can't be placed.)
@@ -812,7 +814,7 @@ public class VisualInventoryConfigScreen extends Screen {
             int warnX = width / 2 - totalW2 / 2;
             int warnY = height - 28 - 18;
             context.text(font,
-                Component.literal("\u26a0 Tier Order is not configured \u2013 set it up or click Solve!"),
+                Component.translatable("inventory-organizer.inventory_config.tier_order_warning"),
                 warnX + 58, warnY + 3, 0xFFFF8800);
         }
 
@@ -1069,7 +1071,7 @@ public class VisualInventoryConfigScreen extends Screen {
     }
 
     private void drawInventoryGrid(GuiGraphicsExtractor context, int mouseX, int mouseY) {
-        context.text(font, Component.literal("Inventory (slots 9-35)"), gridX, gridY - 12, 0xFFFFFF55);
+        context.text(font, Component.translatable("inventory-organizer.tier_order.inventory_label"), gridX, gridY - 12, 0xFFFFFF55);
 
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
@@ -1079,18 +1081,18 @@ public class VisualInventoryConfigScreen extends Screen {
         }
 
         int hotbarY = gridY + 3 * SLOT_H + 14;
-        context.text(font, Component.literal("Hotbar (slots 0-8)"), gridX, hotbarY - 12, 0xFFFFFF55);
+        context.text(font, Component.translatable("inventory-organizer.tier_order.hotbar_label"), gridX, hotbarY - 12, 0xFFFFFF55);
         for (int col = 0; col < 9; col++) {
             drawSlot(context, gridX + col * SLOT_W, hotbarY, col, mouseX, mouseY);
         }
 
         // Always-visible auto-refill hint (so it's discoverable without opening the help guide).
-        context.text(font, Component.literal("§a[R] §7Middle-click a hotbar slot = auto-refill"),
+        context.text(font, Component.translatable("inventory-organizer.inventory_config.autorefill_hint"),
                 gridX, gridY + 3 * SLOT_H + 14 + SLOT_H + 3, 0xFFAAAAAA);
 
         // Armor slots (left of grid): helmet, chestplate, leggings, boots
         int armorX = gridX - SLOT_W - 8;
-        context.text(font, Component.literal("Armor"), armorX, gridY - 12, 0xFF55FFFF);
+        context.text(font, Component.translatable("inventory-organizer.tier_order.armor_label"), armorX, gridY - 12, 0xFF55FFFF);
         for (int i = 0; i < 4; i++) {
             drawEquipSlot(context, armorX, gridY + i * SLOT_H, i, mouseX, mouseY);
         }
@@ -1515,17 +1517,17 @@ public class VisualInventoryConfigScreen extends Screen {
         int hoveredSlot = getHoveredSlot(mouseX, mouseY);
         if (hoveredSlot >= 0) {
             String text = slotTexts[hoveredSlot];
-            String slotName = (hoveredSlot <= 8) ? "Hotbar " + (hoveredSlot + 1) :
-                    "Row " + ((hoveredSlot - 9) / 9 + 1) + " Col " + ((hoveredSlot - 9) % 9 + 1);
+            String slotName = (hoveredSlot <= 8) ? tr("inventory-organizer.inventory_config.tooltip_hotbar_name", (hoveredSlot + 1)) :
+                    tr("inventory-organizer.inventory_config.tooltip_row_col_name", ((hoveredSlot - 9) / 9 + 1), ((hoveredSlot - 9) % 9 + 1));
 
             List<Component> tooltip = new ArrayList<>();
-            tooltip.add(Component.literal("Slot " + hoveredSlot + " (" + slotName + ")"));
-            tooltip.add(Component.literal("Rule: " + text));
-            if (slotRefill[hoveredSlot]) tooltip.add(Component.literal("§bAuto-refill ON"));
+            tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_slot", hoveredSlot, slotName));
+            tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_rule", text));
+            if (slotRefill[hoveredSlot]) tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_autorefill_on"));
             if (selectedText != null) {
-                tooltip.add(Component.literal("Click to set: " + selectedText));
+                tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_click_to_set", selectedText));
             } else {
-                tooltip.add(Component.literal("Right-click = clear to 'any'"));
+                tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_right_click_clear"));
             }
             // Tooltip rendering disabled in 26.1 — GuiGraphicsExtractor has no direct tooltip method.
             // context.renderTooltip(font, tooltip, mouseX, mouseY);
@@ -1536,16 +1538,16 @@ public class VisualInventoryConfigScreen extends Screen {
         if (equipIdx >= 0) {
             String text = equipTexts[equipIdx];
             List<Component> tooltip = new ArrayList<>();
-            tooltip.add(Component.literal(EQUIP_LABELS[equipIdx] + " Slot"));
-            tooltip.add(Component.literal("Rule: " + text));
+            tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_equip_slot", EQUIP_LABELS[equipIdx]));
+            tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_rule", text));
             if (selectedText != null) {
                 if (isValidForEquipSlot(equipIdx, selectedText)) {
-                    tooltip.add(Component.literal("Click to set: " + selectedText));
+                    tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_click_to_set", selectedText));
                 } else {
-                    tooltip.add(Component.literal("\u00a7c" + selectedText + " cannot go here!"));
+                    tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_cannot_go_here", selectedText));
                 }
             } else {
-                tooltip.add(Component.literal("Right-click = clear to 'any'"));
+                tooltip.add(Component.translatable("inventory-organizer.inventory_config.tooltip_right_click_clear"));
             }
             // Tooltip rendering disabled in 26.1 — GuiGraphicsExtractor has no direct tooltip method.
             // context.renderTooltip(font, tooltip, mouseX, mouseY);

@@ -92,13 +92,20 @@ public class SortingOrderConfigScreen extends Screen {
     private boolean sectionExpanded(int key) { return expandedSections.contains(key); }
 
     /** Draw a foldable section header (▶ closed / ▼ open) and record its click rect. Returns expanded. */
-    private boolean drawSectionHeader(GuiGraphicsExtractor context, int px, int curY, String title, int key) {
+    private boolean drawSectionHeader(GuiGraphicsExtractor context, int px, int curY, String titleKey, int key) {
+        return drawSectionHeaderRaw(context, px, curY, tr(titleKey), key);
+    }
+
+    /** Same as {@link #drawSectionHeader}, but takes an already-resolved display string (for dynamic titles). */
+    private boolean drawSectionHeaderRaw(GuiGraphicsExtractor context, int px, int curY, String title, int key) {
         boolean exp = expandedSections.contains(key);
         String arrow = exp ? "▼ " : "▶ ";
         context.text(font, Component.literal("§6" + arrow + title), px + 2, curY, 0xFFFFAA00);
         headerHits.add(new int[]{px, curY - 2, 156, 12, key});
         return exp;
     }
+
+    private static String tr(String key, Object... args) { return Component.translatable(key, args).getString(); }
 
     // Custom group ordering (loaded in loadSortPreferences)
     private List<String> cgNames = new ArrayList<>();
@@ -196,7 +203,7 @@ public class SortingOrderConfigScreen extends Screen {
     }
 
     public SortingOrderConfigScreen(Screen parent, String[] slotTexts, String[] equipTexts, String tierKey, boolean storageMode, int storageRows) {
-        super(Component.literal("Tier Order Configuration"));
+        super(Component.translatable("inventory-organizer.tier_order.screen_title"));
         this.parent = parent;
         this.config = OrganizerConfig.get();
         this.tierKey = tierKey;
@@ -426,18 +433,18 @@ public class SortingOrderConfigScreen extends Screen {
 
         // Number input field: center between grid right edge and right panel
         int fieldX = gridX + 9 * SLOT_W + Math.max(40, width / 14);
-        numberField = new EditBox(font, fieldX, gridY, 50, 18, Component.literal("Tier"));
+        numberField = new EditBox(font, fieldX, gridY, 50, 18, Component.translatable("inventory-organizer.tier_order.tier_field"));
         numberField.setMaxLength(2);
-        numberField.setHint(Component.literal("1-41"));
+        numberField.setHint(Component.translatable("inventory-organizer.tier_order.tier_hint"));
         addRenderableWidget(numberField);
 
         // Set button
-        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Set"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.tier_order.set"), btn -> {
             applyTierFromField();
         }).bounds(fieldX + 54, gridY, 30, 18).build());
 
         // Clear button
-        addRenderableWidget(StyledButton.styledBuilder(Component.literal("X"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.tier_order.clear"), btn -> {
             if (selectedSlot >= 0) {
                 tierAssignments.remove(selectedSlot);
                 numberField.setValue("");
@@ -450,19 +457,19 @@ public class SortingOrderConfigScreen extends Screen {
         int totalW = btnW * 3 + 4 * 2;
         int startX = width / 2 - totalW / 2;
 
-        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Save"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.tier_order.save"), btn -> {
             saveTierAssignments();
             saveSortPreferences();
             Minecraft.getInstance().gui.setScreen(parent);
         }).bounds(startX, btnY, btnW, 20).build());
 
-        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Reset"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.tier_order.reset"), btn -> {
             tierAssignments.clear();
             selectedSlot = -1;
             numberField.setValue("");
         }).bounds(startX + btnW + 4, btnY, btnW, 20).build());
 
-        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Back"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.tier_order.back"), btn -> {
             Minecraft.getInstance().gui.setScreen(parent);
         }).bounds(startX + (btnW + 4) * 2, btnY, btnW, 20).build());
 
@@ -525,8 +532,8 @@ public class SortingOrderConfigScreen extends Screen {
         int panelH = height - py - 34;
         drawDecoratedPanel(context, px - 10, py - 10, panelW + 16, panelH + 16);
 
-        context.centeredText(font, Component.literal("Tier Order Configuration"), width / 2, 4, 0xFFFFFFFF);
-        context.text(font, Component.literal("Click slot > type tier (1=best) > Set | Only slots with rules can be tiered"), width / 2 - 200, 16, 0xFFAAAAAA);
+        context.centeredText(font, Component.translatable("inventory-organizer.tier_order.screen_title"), width / 2, 4, 0xFFFFFFFF);
+        context.text(font, Component.translatable("inventory-organizer.tier_order.subtitle"), width / 2 - 200, 16, 0xFFAAAAAA);
 
         drawInventoryGrid(context, mouseX, mouseY);
         drawRightPanel(context, mouseX, mouseY);
@@ -541,7 +548,7 @@ public class SortingOrderConfigScreen extends Screen {
 
     private void drawInventoryGrid(GuiGraphicsExtractor context, int mouseX, int mouseY) {
         if (storageMode) {
-            context.text(font, Component.literal("Storage Slots"), gridX, gridY - 12, 0xFFFFFF55);
+            context.text(font, Component.translatable("inventory-organizer.tier_order.storage_slots"), gridX, gridY - 12, 0xFFFFFF55);
             for (int row = 0; row < storageRows; row++) {
                 for (int col = 0; col < 9; col++) {
                     drawSlot(context, gridX + col * SLOT_W, gridY + row * SLOT_H, row * 9 + col, mouseX, mouseY);
@@ -550,7 +557,7 @@ public class SortingOrderConfigScreen extends Screen {
             return;
         }
         // Inventory label
-        context.text(font, Component.literal("Inventory (slots 9-35)"), gridX, gridY - 12, 0xFFFFFF55);
+        context.text(font, Component.translatable("inventory-organizer.tier_order.inventory_label"), gridX, gridY - 12, 0xFFFFFF55);
 
         // Main inventory rows (3 rows x 9 cols, slots 9-35)
         for (int row = 0; row < 3; row++) {
@@ -562,21 +569,21 @@ public class SortingOrderConfigScreen extends Screen {
 
         // Hotbar (slots 0-8)
         int hotbarY = gridY + 3 * SLOT_H + 14;
-        context.text(font, Component.literal("Hotbar (slots 0-8)"), gridX, hotbarY - 12, 0xFFFFFF55);
+        context.text(font, Component.translatable("inventory-organizer.tier_order.hotbar_label"), gridX, hotbarY - 12, 0xFFFFFF55);
         for (int col = 0; col < 9; col++) {
             drawSlot(context, gridX + col * SLOT_W, hotbarY, col, mouseX, mouseY);
         }
 
         // Armor slots (left of grid)
         int armorX = gridX - SLOT_W - 8;
-        context.text(font, Component.literal("Armor"), armorX, gridY - 12, 0xFF55FFFF);
+        context.text(font, Component.translatable("inventory-organizer.tier_order.armor_label"), armorX, gridY - 12, 0xFF55FFFF);
         for (int i = 0; i < 4; i++) {
             drawEquipSlot(context, armorX, gridY + i * SLOT_H, i, mouseX, mouseY);
         }
 
         // Offhand slot (below armor)
         int offhandY = gridY + 4 * SLOT_H + 4;
-        context.text(font, Component.literal("Off"), armorX + 4, offhandY - 10, 0xFF55FFFF);
+        context.text(font, Component.translatable("inventory-organizer.tier_order.offhand_label"), armorX + 4, offhandY - 10, 0xFF55FFFF);
         drawEquipSlot(context, armorX, offhandY, 4, mouseX, mouseY);
     }
 
@@ -735,10 +742,10 @@ public class SortingOrderConfigScreen extends Screen {
             if (selectedSlot >= 100) slotName = EQUIP_LABELS[selectedSlot - 100];
             else if (selectedSlot < 9) slotName = "Hotbar " + (selectedSlot + 1);
             else slotName = "Inv " + (selectedSlot - 9 + 1);
-            context.text(font, Component.literal("Selected: " + slotName), px + 2, curY, 0xFFFFFF55);
+            context.text(font, Component.translatable("inventory-organizer.tier_order.selected_slot", slotName), px + 2, curY, 0xFFFFFF55);
             curY += 11;
             Integer tier = tierAssignments.get(selectedSlot);
-            context.text(font, Component.literal("Tier: " + (tier != null ? tier : "-")),
+            context.text(font, Component.translatable("inventory-organizer.tier_order.tier_value", (tier != null ? tier : "-")),
                     px + 2, curY, tier != null ? 0xFF55FF55 : 0xFF888888);
             curY += 15;
         }
@@ -746,7 +753,7 @@ public class SortingOrderConfigScreen extends Screen {
         // -- Sort Priority --
         panelStartY = curY;
         if (!advanced) {
-            boolean exp = drawSectionHeader(context, px, curY, "Sort Priority", 0);
+            boolean exp = drawSectionHeader(context, px, curY, "inventory-organizer.tier_order.section_sort_priority", 0);
             curY += 13;
             if (exp) {
                 sectionFirstItemY[0] = curY + scrollOffset;
@@ -768,7 +775,7 @@ public class SortingOrderConfigScreen extends Screen {
         // -- Material Order --
         if (!advanced) {
             curY += 6;
-            boolean exp = drawSectionHeader(context, px, curY, "Material Order", 1);
+            boolean exp = drawSectionHeader(context, px, curY, "inventory-organizer.tier_order.section_material_order", 1);
             curY += 13;
             if (exp) {
                 sectionFirstItemY[1] = curY + scrollOffset;
@@ -790,7 +797,7 @@ public class SortingOrderConfigScreen extends Screen {
         // -- Potion Type Order --
         if (!advanced) {
             curY += 6;
-            boolean exp = drawSectionHeader(context, px, curY, "Potion Type Order", 2);
+            boolean exp = drawSectionHeader(context, px, curY, "inventory-organizer.tier_order.section_potion_type_order", 2);
             curY += 13;
             if (exp) {
                 sectionFirstItemY[2] = curY + scrollOffset;
@@ -812,7 +819,7 @@ public class SortingOrderConfigScreen extends Screen {
         // -- Toggles --
         if (!advanced) {
             curY += 8;
-            boolean exp = drawSectionHeader(context, px, curY, "Toggles", SEC_TOGGLES);
+            boolean exp = drawSectionHeader(context, px, curY, "inventory-organizer.tier_order.section_toggles", SEC_TOGGLES);
             curY += 13;
             if (exp) {
                 boolean hoverEnch = isHoveredArea(mouseX, mouseY, px, curY - 1, 180, 12);
@@ -839,7 +846,7 @@ public class SortingOrderConfigScreen extends Screen {
         // -- Enchantment Order --
         if (!advanced) {
             curY += 8;
-            boolean exp = drawSectionHeader(context, px, curY, "Enchantment Order", 4);
+            boolean exp = drawSectionHeader(context, px, curY, "inventory-organizer.tier_order.section_enchantment_order", 4);
             curY += 13;
             if (exp) {
                 sectionFirstItemY[4] = curY + scrollOffset;
@@ -861,7 +868,7 @@ public class SortingOrderConfigScreen extends Screen {
         // -- Potion Order --
         if (!advanced) {
             curY += 8;
-            boolean exp = drawSectionHeader(context, px, curY, "Potion Order", 5);
+            boolean exp = drawSectionHeader(context, px, curY, "inventory-organizer.tier_order.section_potion_order", 5);
             curY += 13;
             if (exp) {
                 sectionFirstItemY[5] = curY + scrollOffset;
@@ -887,7 +894,7 @@ public class SortingOrderConfigScreen extends Screen {
         for (int gi = 0; gi < cgNames.size(); gi++) {
             int secIdx = 7 + gi;
             curY += 8;
-            boolean exp = drawSectionHeader(context, px, curY, "Group \"" + cgNames.get(gi) + "\"", secIdx);
+            boolean exp = drawSectionHeaderRaw(context, px, curY, tr("inventory-organizer.tier_order.section_group", cgNames.get(gi)), secIdx);
             curY += 13;
             if (secIdx < sectionFirstItemY.length) {
                 if (!exp) { sectionFirstItemY[secIdx] = Integer.MIN_VALUE / 2; continue; }
@@ -1526,34 +1533,34 @@ public class SortingOrderConfigScreen extends Screen {
         // Title bar
         context.fill(gx + 4, gy + 4, gx + gw - 4, gy + 20, 0xFF1A1A2E);
         context.centeredText(font,
-            Component.literal("\u00a7e\u00a7lTier Order Config Guide"), width / 2, gy + 8, 0xFFFFFF55);
+            Component.translatable("inventory-organizer.tier_order.guide_title"), width / 2, gy + 8, 0xFFFFFF55);
 
         int lx = gx + 12, ly = gy + 26, lh = 13;
 
         context.text(font,
-            Component.literal("\u00a7b--- Slot Tier Assignment ---"), lx, ly, 0xFF55FFFF); ly += lh;
+            Component.translatable("inventory-organizer.tier_order.guide_slot_head"), lx, ly, 0xFF55FFFF); ly += lh;
         context.text(font,
-            Component.literal("\u00a7e[1] \u00a7fClick a slot (only slots with rules can be tiered)"), lx, ly, 0xFFFFFFFF); ly += lh;
+            Component.translatable("inventory-organizer.tier_order.guide_slot_1"), lx, ly, 0xFFFFFFFF); ly += lh;
         context.text(font,
-            Component.literal("\u00a7e[2] \u00a7fType a tier number (1 = highest priority, 41 = lowest)"), lx, ly, 0xFFFFFFFF); ly += lh;
+            Component.translatable("inventory-organizer.tier_order.guide_slot_2"), lx, ly, 0xFFFFFFFF); ly += lh;
         context.text(font,
-            Component.literal("\u00a7e[3] \u00a7fPress 'Set' to apply the tier to the selected slot"), lx, ly, 0xFFFFFFFF); ly += lh;
+            Component.translatable("inventory-organizer.tier_order.guide_slot_3"), lx, ly, 0xFFFFFFFF); ly += lh;
         context.text(font,
-            Component.literal("\u00a7e[4] \u00a7fPress 'X' to clear the tier from the selected slot"), lx, ly, 0xFFFFFFFF); ly += lh + 3;
+            Component.translatable("inventory-organizer.tier_order.guide_slot_4"), lx, ly, 0xFFFFFFFF); ly += lh + 3;
 
         context.text(font,
-            Component.literal("\u00a7b--- Right Panel (Sort Order) ---"), lx, ly, 0xFF55FFFF); ly += lh;
+            Component.translatable("inventory-organizer.tier_order.guide_panel_head"), lx, ly, 0xFF55FFFF); ly += lh;
         context.text(font,
-            Component.literal("\u00a7e[5] \u00a7fDrag items in the list to reorder sort priority"), lx, ly, 0xFFFFFFFF); ly += lh;
+            Component.translatable("inventory-organizer.tier_order.guide_panel_1"), lx, ly, 0xFFFFFFFF); ly += lh;
         context.text(font,
-            Component.literal("\u00a7e[6] \u00a7fSort Priority: order of sort criteria applied"), lx, ly, 0xFFFFFFFF); ly += lh;
+            Component.translatable("inventory-organizer.tier_order.guide_panel_2"), lx, ly, 0xFFFFFFFF); ly += lh;
         context.text(font,
-            Component.literal("\u00a7e[7] \u00a7fMaterial/Food/Enchant Order: group ordering"), lx, ly, 0xFFFFFFFF); ly += lh + 6;
+            Component.translatable("inventory-organizer.tier_order.guide_panel_3"), lx, ly, 0xFFFFFFFF); ly += lh + 6;
 
         context.fill(gx + 12, ly, gx + gw - 12, ly + 1, 0xFF444444); ly += 6;
 
         context.centeredText(font,
-            Component.literal("\u00a77Click outside or press \u00a7e[?]\u00a77 to close this guide"), width / 2, ly, 0xFF888888);
+            Component.translatable("inventory-organizer.tier_order.guide_close_hint"), width / 2, ly, 0xFF888888);
     }
 
     @Override

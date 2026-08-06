@@ -61,12 +61,14 @@ public class CustomGroupListScreen extends Screen {
     }
 
     public CustomGroupListScreen(Screen parent) {
-        super(Component.literal("Custom Item Groups"));
+        super(Component.translatable("inventory-organizer.groups.screen_title"));
         this.parent = parent;
         this.config = OrganizerConfig.get();
         // Defensive: make sure the built-in→custom migration has run before listing.
         this.config.materializeBuiltinGroupsOnce();
     }
+
+    private static String tr(String key, Object... args) { return Component.translatable(key, args).getString(); }
 
     private void setStatus(String msg) {
         this.statusMessage = msg;
@@ -78,7 +80,7 @@ public class CustomGroupListScreen extends Screen {
         try {
             java.util.List<GroupTextFile.ImportedGroup> imported = GroupTextFile.scanImportFolder();
             if (imported.isEmpty()) {
-                setStatus("§eNo .txt files found in import folder.");
+                setStatus(tr("inventory-organizer.groups.status_no_txt"));
                 return;
             }
             int added = 0, updated = 0;
@@ -93,10 +95,10 @@ public class CustomGroupListScreen extends Screen {
                 }
             }
             config.save();
-            setStatus("§aImported: " + added + " new, " + updated + " updated.");
+            setStatus(tr("inventory-organizer.groups.status_imported", added, updated));
             rebuildButtons();
         } catch (Exception e) {
-            setStatus("§cImport failed: " + e.getMessage());
+            setStatus(tr("inventory-organizer.groups.status_import_failed", e.getMessage()));
         }
     }
 
@@ -109,9 +111,9 @@ public class CustomGroupListScreen extends Screen {
         // Persist the search box across rebuilds: create it once, then re-add the SAME instance in
         // rebuildButtons() (which clears all widgets). Re-adding keeps its text, cursor and focus.
         if (searchField == null) {
-            searchField = new EditBox(font, width / 2 - 100, 22, 200, 16, Component.literal("Search groups"));
+            searchField = new EditBox(font, width / 2 - 100, 22, 200, 16, Component.translatable("inventory-organizer.groups.search_field"));
             searchField.setMaxLength(32);
-            searchField.setHint(Component.literal("Search groups…"));
+            searchField.setHint(Component.translatable("inventory-organizer.groups.search_hint"));
             searchField.setResponder(t -> { scrollOffset = 0; rebuildButtons(); });
         } else {
             // width may have changed on resize
@@ -143,7 +145,7 @@ public class CustomGroupListScreen extends Screen {
             final Row row = rows.get(i);
             int y = startY + (i - scrollOffset) * rowH;
 
-            addRenderableWidget(StyledButton.styledBuilder(Component.literal("\u270E Edit"), btn -> {
+            addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.groups.edit"), btn -> {
                 config.save();
                 // Edit as a NORMAL custom group (isBuiltin=false) so changes save to customGroups \u2014 the
                 // store the sorter actually reads. The built-in flag only governs deletability.
@@ -152,7 +154,7 @@ public class CustomGroupListScreen extends Screen {
 
             // Built-in groups are editable but NOT deletable (they're permanent custom groups).
             if (!row.builtin) {
-                addRenderableWidget(StyledButton.styledBuilder(Component.literal("\u2716 Delete"), btn -> {
+                addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.groups.delete"), btn -> {
                     config.deleteCustomGroup(row.name);
                     config.save();
                     rebuildButtons();
@@ -181,10 +183,10 @@ public class CustomGroupListScreen extends Screen {
         int total = wNew + wImp + wFld + wBack + gap * 3;
         int x = width / 2 - total / 2;
 
-        addRenderableWidget(StyledButton.styledBuilder(Component.literal("+ New"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.groups.new"), btn -> {
             showNameInput = true;
             pendingEditGroup = null;
-            nameField = new EditBox(font, width / 2 - 80, height / 2 - 10, 160, 20, Component.literal("Group name"));
+            nameField = new EditBox(font, width / 2 - 80, height / 2 - 10, 160, 20, Component.translatable("inventory-organizer.groups.name_field"));
             nameField.setMaxLength(32);
             nameField.setTextColor(0xFFFFFFFF);
             nameField.setFocused(true);
@@ -192,18 +194,18 @@ public class CustomGroupListScreen extends Screen {
         }).bounds(x, btnY, wNew, 20).build());
         x += wNew + gap;
 
-        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Import All"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.groups.import_all"), btn -> {
             importAllFromFolder();
         }).bounds(x, btnY, wImp, 20).build());
         x += wImp + gap;
 
-        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Folder"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.groups.folder"), btn -> {
             GroupTextFile.openImportFolder();
-            setStatus("§7Opened import folder. Drop .txt files there, then click Import All.");
+            setStatus(tr("inventory-organizer.groups.status_opened_import_folder"));
         }).bounds(x, btnY, wFld, 20).build());
         x += wFld + gap;
 
-        addRenderableWidget(StyledButton.styledBuilder(Component.literal("Back"), btn -> {
+        addRenderableWidget(StyledButton.styledBuilder(Component.translatable("inventory-organizer.groups.back"), btn -> {
             Minecraft.getInstance().gui.setScreen(parent);
         }).bounds(x, btnY, wBack, 20).build());
     }
@@ -219,7 +221,7 @@ public class CustomGroupListScreen extends Screen {
         }
         super.extractRenderState(context, mouseX, mouseY, delta);
 
-        context.centeredText(font, Component.literal("Item Groups"), width / 2, 8, 0xFFFFFFFF);
+        context.centeredText(font, Component.translatable("inventory-organizer.groups.header"), width / 2, 8, 0xFFFFFFFF);
 
         java.util.List<Row> rows = buildRows();
         int startY = LIST_TOP;
@@ -229,7 +231,7 @@ public class CustomGroupListScreen extends Screen {
             Row row = rows.get(i);
             int y = startY + (i - scrollOffset) * rowH;
             int itemCount = config.getCustomGroup(row.name).size();
-            String label = "\u00a7e" + row.name + "\u00a7r \u00a77(" + itemCount + " items)";
+            String label = tr("inventory-organizer.groups.row_label", row.name, itemCount);
             context.text(font, Component.literal(label), width / 2 - 20, y + 4, 0xFFFFFFFF);
         }
 
@@ -246,8 +248,8 @@ public class CustomGroupListScreen extends Screen {
             context.horizontalLine(bx, bx + 200, by + 80, 0xFF888888);
             context.verticalLine(bx, by, by + 80, 0xFF888888);
             context.verticalLine(bx + 200, by, by + 80, 0xFF888888);
-            context.centeredText(font, Component.literal("Enter group name:"), width / 2, by + 8, 0xFFFFFF55);
-            context.centeredText(font, Component.literal("[Enter] confirm  [Esc] cancel"), width / 2, by + 60, 0xFF888888);
+            context.centeredText(font, Component.translatable("inventory-organizer.groups.enter_name_prompt"), width / 2, by + 8, 0xFFFFFF55);
+            context.centeredText(font, Component.translatable("inventory-organizer.groups.confirm_cancel_hint"), width / 2, by + 60, 0xFF888888);
             // Re-render nameField on top of fill (was covered by fill after super.render)
             nameField.extractRenderState(context, mouseX, mouseY, delta);
         }
