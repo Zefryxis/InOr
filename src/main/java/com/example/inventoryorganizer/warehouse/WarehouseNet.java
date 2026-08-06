@@ -80,14 +80,44 @@ public final class WarehouseNet {
         Borrow(String id, BlockPos chest, int count) { this.id = id; this.chest = chest; this.count = count; }
     }
     private static final Map<UUID, List<Borrow>> BORROWED = new ConcurrentHashMap<>();
+    // Self-heal safety net for BORROWED: every code path that populates it (recipe-switch, crafting-table
+    // close, the explicit "cancel recipe" button, disconnect) is currently proven to also clear it — but
+    // it's server-side bookkeeping that isn't tied to the menu lifecycle by the type system, so a future
+    // mixin refactor could silently skip the cleanup on some path and leak an entry. That's an ITEM-LOSS
+    // risk (a borrowed stack never gets returned to its chest), never a dupe — and it's purely internal
+    // session bookkeeping, completely separate from (and never touches) any saved player config/settings.
+    // This tracks when each player's list was last touched and periodically drops (never "returns" —
+    // we don't reliably know their menu is even still open by then) anything that's sat untouched for
+    // BORROW_STALE_MS, so a leak like that can't grow unbounded or resurface incorrectly on a later craft.
+    private static final Map<UUID, Long> BORROWED_TOUCHED = new ConcurrentHashMap<>();
+    private static final long BORROW_STALE_MS = 10 * 60 * 1000L; // 10 minutes
 
     /** Record that {@code count} of {@code itemId} was pulled from the chest at {@code chest}. */
     public static void recordBorrow(UUID id, String itemId, BlockPos chest, int count) {
         if (id == null || itemId == null || chest == null || count <= 0) return;
         List<Borrow> list = BORROWED.computeIfAbsent(id, k -> java.util.Collections.synchronizedList(new ArrayList<>()));
+        BORROWED_TOUCHED.put(id, System.currentTimeMillis());
         synchronized (list) {
             for (Borrow b : list) if (b.id.equals(itemId) && b.chest.equals(chest)) { b.count += count; return; }
             list.add(new Borrow(itemId, chest.immutable(), count));
+        }
+    }
+
+    /** Periodic self-heal sweep — see BORROWED_TOUCHED doc above. Called from a low-frequency server-tick
+     *  hook (registerServer()), never from a hot path. */
+    private static void sweepStaleBorrows() {
+        if (BORROWED.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        for (UUID id : new ArrayList<>(BORROWED.keySet())) {
+            Long touched = BORROWED_TOUCHED.get(id);
+            if (touched == null || now - touched > BORROW_STALE_MS) {
+                if (BORROWED.remove(id) != null) {
+                    LOGGER.warn("[Warehouse] Dropped a stale borrowed-ingredient ledger for {} after {} min "
+                            + "of inactivity (self-heal safety net — should not normally happen)",
+                            id, BORROW_STALE_MS / 60000L);
+                }
+                BORROWED_TOUCHED.remove(id);
+            }
         }
     }
 
@@ -115,6 +145,7 @@ public final class WarehouseNet {
                                               List<ChestRules> chestRules) {
         if (player == null || level == null || slots == null) return;
         List<Borrow> borrowed = BORROWED.remove(player.getUUID());
+        BORROWED_TOUCHED.remove(player.getUUID());
         if (borrowed == null || borrowed.isEmpty()) return;
         CraftCtx ctx = craftCtx(player.getUUID()); // fallback chest list if a source is gone/full
         Map<BlockPos, List<String>> ruleMap = new java.util.HashMap<>();
@@ -203,6 +234,15 @@ public final class WarehouseNet {
 
     /** Server-side wiring: greet joiners + handle warehouse link + sort requests. */
     public static void registerServer() {
+        // Low-frequency self-heal sweep for the BORROWED ledger — see its doc above. Every 1200 ticks
+        // (~60s at 20 TPS); the map is normally empty/tiny so this is effectively free.
+        final int[] sweepTickCounter = {0};
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (++sweepTickCounter[0] >= 1200) {
+                sweepTickCounter[0] = 0;
+                try { sweepStaleBorrows(); } catch (Throwable ignored) {}
+            }
+        });
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             ServerPlayNetworking.send(handler.player, new WarehouseHelloPayload(PROTOCOL));
             ServerPlayNetworking.send(handler.player, new SwitchCapabilityPayload());
@@ -759,6 +799,7 @@ public final class WarehouseNet {
             CRAFT_CTX.remove(handler.player.getUUID());
             REVEAL_SEEN.remove(handler.player.getUUID());
             BORROWED.remove(handler.player.getUUID());
+            BORROWED_TOUCHED.remove(handler.player.getUUID());
             PLAYER_GROUPS.remove(handler.player.getUUID());
             LAST_SWITCH.remove(handler.player.getUUID());
             LAST_MAP_QUERY.remove(handler.player.getUUID());

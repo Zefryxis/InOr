@@ -97,9 +97,13 @@ public class InventorySorter {
         if (client.player == null || client.gameMode == null) return;
         if (client.player.inventoryMenu == null) return;
 
-        // ---- Defense in depth: central fight-mode enforcement ----
-        // If combat is active and we were NOT entered through sortInventoryFightMode(), re-route so the
-        // one-item-per-press limit + cooldown always apply (no caller can full-sort during PvP).
+        // ---- Defense in depth: central fight-mode + public-server enforcement ----
+        // FightModeTracker.isActive() is NOT just "in combat right now" — it's also permanently true for
+        // the whole session on any public, non-whitelisted server (FightModeTracker.isSfForced(), folded
+        // into isActive()). So this single check already throttles OI to one-item-per-press + a jittered
+        // cooldown everywhere anti-cheat could realistically be watching (any public server, all the
+        // time — not just the 20s post-combat window), while leaving it instant only in private/
+        // whitelisted environments. No caller can full-sort during PvP OR on an unwhitelisted server.
         if (FightModeTracker.isActive() && !fightModeLimit) {
             if (!FightModeTracker.canUseOI()) return;   // honour the randomised cooldown
             FightModeTracker.markOIUsed();
