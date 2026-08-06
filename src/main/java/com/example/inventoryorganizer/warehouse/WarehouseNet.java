@@ -43,6 +43,11 @@ public final class WarehouseNet {
     private static final Map<UUID, Long> LAST_MAP_QUERY = new ConcurrentHashMap<>();
     private static final Map<UUID, Long> LAST_SYNC_GROUPS = new ConcurrentHashMap<>();
     private static final Map<UUID, Long> LAST_BUNDLE_SORT = new ConcurrentHashMap<>();
+    /** Anti-spam for the link-management payloads (upload/delete link, OST roster/perm changes) — each
+     *  accepted request can trigger a synchronous WarehouseLinks save() (disk I/O), so an unthrottled
+     *  malicious client firing these as fast as the network layer allows is a cheap TPS-stutter DoS. */
+    private static final long LINK_MGMT_COOLDOWN_MS = 300L;
+    private static final Map<UUID, Long> LAST_LINK_MGMT = new ConcurrentHashMap<>();
 
     /** Players whose attack cooldown must NOT reset on the next held-item change, because a switch swap
      *  put the tool in hand — so the weapon stays ready to strike (the swap itself shouldn't reset it;
@@ -326,6 +331,7 @@ public final class WarehouseNet {
         ServerPlayNetworking.registerGlobalReceiver(UploadLinkPayload.TYPE, (payload, context) -> {
             ServerPlayer player = context.player();
             if (player == null) return;
+            if (onCooldown(player, LAST_LINK_MGMT, LINK_MGMT_COOLDOWN_MS)) return;
             ServerLevel level = (ServerLevel) player.level();
             level.getServer().execute(() -> {
                 try {
@@ -355,6 +361,7 @@ public final class WarehouseNet {
         ServerPlayNetworking.registerGlobalReceiver(DeleteLinkPayload.TYPE, (payload, context) -> {
             ServerPlayer player = context.player();
             if (player == null) return;
+            if (onCooldown(player, LAST_LINK_MGMT, LINK_MGMT_COOLDOWN_MS)) return;
             ServerLevel level = (ServerLevel) player.level();
             level.getServer().execute(() -> {
                 try {
@@ -370,6 +377,7 @@ public final class WarehouseNet {
         ServerPlayNetworking.registerGlobalReceiver(RequestOstRosterPayload.TYPE, (payload, context) -> {
             ServerPlayer player = context.player();
             if (player == null) return;
+            if (onCooldown(player, LAST_LINK_MGMT, LINK_MGMT_COOLDOWN_MS)) return;
             ServerLevel level = (ServerLevel) player.level();
             level.getServer().execute(() -> {
                 try { sendOstRoster(player, payload.anyPos()); } catch (Throwable ignored) {}
@@ -380,6 +388,7 @@ public final class WarehouseNet {
         ServerPlayNetworking.registerGlobalReceiver(SetOstPermPayload.TYPE, (payload, context) -> {
             ServerPlayer player = context.player();
             if (player == null) return;
+            if (onCooldown(player, LAST_LINK_MGMT, LINK_MGMT_COOLDOWN_MS)) return;
             ServerLevel level = (ServerLevel) player.level();
             level.getServer().execute(() -> {
                 try {
@@ -757,6 +766,7 @@ public final class WarehouseNet {
             SWITCH_READY.remove(handler.player.getUUID());
             SWITCH_FROM.remove(handler.player.getUUID());
             LAST_BUNDLE_SORT.remove(handler.player.getUUID());
+            LAST_LINK_MGMT.remove(handler.player.getUUID());
         });
     }
 
@@ -893,10 +903,16 @@ public final class WarehouseNet {
 
     /** Shared sort anti-spam: true when this player's request comes in faster than the cooldown. */
     private static boolean onCooldown(ServerPlayer player) {
+        return onCooldown(player, LAST_SORT, SORT_COOLDOWN_MS);
+    }
+
+    /** Generic per-player anti-spam check against an arbitrary cooldown map — true (and rejects) when
+     *  this player's last accepted request was more recently than {@code cooldownMs} ago. */
+    private static boolean onCooldown(ServerPlayer player, Map<UUID, Long> lastMap, long cooldownMs) {
         long now = System.currentTimeMillis();
-        Long last = LAST_SORT.get(player.getUUID());
-        if (last != null && now - last < SORT_COOLDOWN_MS) return true;
-        LAST_SORT.put(player.getUUID(), now);
+        Long last = lastMap.get(player.getUUID());
+        if (last != null && now - last < cooldownMs) return true;
+        lastMap.put(player.getUUID(), now);
         return false;
     }
 }

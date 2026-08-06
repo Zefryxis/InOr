@@ -1140,8 +1140,18 @@ public class InventoryOrganizerClient implements ClientModInitializer {
     }
 
     private static long lastLootMs = 0L;
+    private static long lastLootCooldownMs = 0L; // rolled fresh each time lastLootMs is set — see below
     private static int lastLootContainerId = -1;
-    private static final long LOOT_COOLDOWN_MS = 55L;
+    private static final long LOOT_COOLDOWN_BASE_MS = 55L;
+    private static final long LOOT_COOLDOWN_RAND_MS = 20L;
+
+    /** Randomised cooldown gap (mirrors FightModeTracker's OI jitter): sustained scrolling should never
+     *  produce a perfectly metronomic packet cadence, which is exactly the fixed-interval signature
+     *  auto-clicker/macro detectors look for. Rolled once per fired action, not per check, so the gap
+     *  between any two consecutive actions varies rather than the check threshold itself flapping. */
+    private static long rollJitteredCooldown(long baseMs, long randMs) {
+        return baseMs + (long) (Math.random() * randMs);
+    }
 
     /** True while either Shift key is physically held (26.1 has no Screen.hasShiftDown()). */
     private static boolean isShiftDown(Minecraft client) {
@@ -1272,8 +1282,9 @@ public class InventoryOrganizerClient implements ClientModInitializer {
         int syncId = menu.containerId;
         if (syncId != lastLootContainerId) { lastLootContainerId = syncId; lastLootMs = 0L; }
         long now = System.currentTimeMillis();
-        if (now - lastLootMs < LOOT_COOLDOWN_MS) return true; // consume, just don't spam
+        if (now - lastLootMs < lastLootCooldownMs) return true; // consume, just don't spam
         lastLootMs = now;
+        lastLootCooldownMs = rollJitteredCooldown(LOOT_COOLDOWN_BASE_MS, LOOT_COOLDOWN_RAND_MS);
 
         // Chest deposit (scroll up): try OST-aware placement into the correct rule slot first.
         if (!(screen instanceof InventoryScreen) && up) {
@@ -1315,25 +1326,30 @@ public class InventoryOrganizerClient implements ClientModInitializer {
             lastLootMs = 0L;
         }
         long now = System.currentTimeMillis();
-        if (now - lastLootMs < LOOT_COOLDOWN_MS) return true; // still consume, just don't spam moves
+        if (now - lastLootMs < lastLootCooldownMs) return true; // still consume, just don't spam moves
         lastLootMs = now;
+        lastLootCooldownMs = rollJitteredCooldown(LOOT_COOLDOWN_BASE_MS, LOOT_COOLDOWN_RAND_MS);
         client.gameMode.handleContainerInput(syncId, slot.index, 0,
                 net.minecraft.world.inventory.ContainerInput.QUICK_MOVE, client.player);
         return true;
     }
 
     private static long lastInvScrollSortMs = 0L;
-    private static final long INV_SCROLL_SORT_COOLDOWN_MS = 60L;
+    private static long lastInvScrollSortCooldownMs = 0L; // rolled fresh each fire — see rollJitteredCooldown
+    private static final long INV_SCROLL_SORT_COOLDOWN_BASE_MS = 60L;
+    private static final long INV_SCROLL_SORT_COOLDOWN_RAND_MS = 20L;
 
     /**
      * Inventory scroll-sort: move ONE out-of-place item into its configured slot per scroll notch
-     * (reuses the one-swap path used by fight mode). Lightly rate-limited. Returns true if handled.
+     * (reuses the one-swap path used by fight mode). Lightly rate-limited (jittered — see
+     * rollJitteredCooldown). Returns true if handled.
      */
     private static boolean tryInventoryScrollSort(Minecraft client) {
         if (client.player == null) return false;
         long now = System.currentTimeMillis();
-        if (now - lastInvScrollSortMs < INV_SCROLL_SORT_COOLDOWN_MS) return true; // consume, skip
+        if (now - lastInvScrollSortMs < lastInvScrollSortCooldownMs) return true; // consume, skip
         lastInvScrollSortMs = now;
+        lastInvScrollSortCooldownMs = rollJitteredCooldown(INV_SCROLL_SORT_COOLDOWN_BASE_MS, INV_SCROLL_SORT_COOLDOWN_RAND_MS);
         InventorySorter.sortInventoryFightMode(); // performs exactly one swap
         return true;
     }

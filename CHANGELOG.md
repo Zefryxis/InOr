@@ -8,6 +8,7 @@ A quick hotfix round on top of 1.6.2: two crashes/bugs found right after release
 - Fixed a hard crash dragging the deposit ("send item to chest") slot into a screen corner — its clamp only kept the slot on-screen, not the hint text drawn around it, which could render past the real screen bounds and crash.
 - Fixed the search box not accepting typing, and the list snapping back to the top, on the Inventory tab and the Trash editor (reported in [#6](https://github.com/Zefryxis/InOr/issues/6)) — the search box was being rebuilt from scratch on every re-layout, discarding what was typed and its focus. Also removed a redundant per-frame search re-check that could re-trigger a scroll reset.
 - Hardened scroll-move against Fight Mode with its own explicit check, in addition to the existing indirect "Free mode only" gate — a near-instant item-move method like this could otherwise look like a macro to anti-cheat if it ever worked mid-combat.
+- Security/anti-cheat pass: randomised the scroll-move cooldown gap (was a fixed, metronomic interval — a known auto-clicker tell), added missing per-player rate limits to the warehouse link-management packets (previously unthrottled, could force repeated disk writes), and removed a leftover unused network payload.
 
 ## 1.6.2 — 26.2
 
